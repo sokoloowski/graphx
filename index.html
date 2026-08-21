@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101d2e" />
+    <title>Orb · Graph Explorer</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">O</span><span>ORB <b>EXPLORER</b></span></div>
+        <div id="graph-meta" class="graph-meta">No graph loaded</div>
+        <div class="topbar-actions">
+          <button id="fit-button" class="icon-button" title="Fit view" aria-label="Fit view">⌗</button>
+          <label class="file-button">Load file<input id="file-input" type="file" accept=".json,.node-link,.dot,.gv,text/vnd.graphviz,application/json" /></label>
+        </div>
+      </header>
+      <section class="workspace">
+        <aside class="side-panel controls">
+          <p class="eyebrow">DATA SOURCE</p>
+          <div id="drop-zone" class="drop-zone" tabindex="0" role="button">
+            <span class="drop-icon">↓</span>
+            <strong>Drop a graph file</strong>
+            <span>Node-Link JSON or Graphviz DOT</span>
+            <button id="browse-button" type="button" class="text-button">Browse files</button>
+          </div>
+          <div class="sample-block">
+            <p class="eyebrow">SAMPLE DATA</p>
+            <button class="sample-button" data-sample="json"><span>◈</span> Node-Link JSON</button>
+            <button class="sample-button" data-sample="dot"><span>◇</span> Graphviz DOT</button>
+          </div>
+          <div class="legend">
+            <p class="eyebrow">LEGEND</p>
+            <div><i class="legend-node"></i> Node</div>
+            <div><i class="legend-line"></i> Edge</div>
+            <div><i class="legend-active"></i> Selection / neighbourhood</div>
+          </div>
+        </aside>
+        <section class="graph-area">
+          <div id="graph" aria-label="Interactive graph visualization"></div>
+          <div id="empty-state" class="empty-state">
+            <span class="empty-orb">◌</span>
+            <h1>Discover connections in your data</h1>
+            <p>Drag a file into the app or pick one of the samples.</p>
+          </div>
+          <div class="canvas-hint">Scroll to zoom · drag to pan</div>
+          <div id="toast" class="toast" role="alert"></div>
+        </section>
+        <aside class="side-panel details-panel">
+          <p class="eyebrow">SELECTION DETAILS</p>
+          <div id="selection-empty" class="selection-empty"><span>◎</span><p>Click a node or edge to see its attributes and relationships.</p></div>
+          <div id="selection-details" hidden>
+            <div class="selection-head"><span id="selection-kind" class="kind-badge"></span><button id="clear-selection" class="clear-button" title="Clear selection">×</button></div>
+            <h2 id="selection-title"></h2>
+            <div class="relationship-summary"><span id="relationship-count">0</span> <span id="relationship-label">connections</span></div>
+            <p class="eyebrow attributes-label">ATTRIBUTES</p>
+            <dl id="attributes" class="attributes"></dl>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+# npm install dir
+node_modules/
+
+# build dir
+dist/
