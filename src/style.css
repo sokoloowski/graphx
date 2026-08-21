@@ -409,6 +409,14 @@ input {
     overflow-wrap: anywhere;
 }
 
+.empty-state[hidden] {
+    display: none;
+}
+
+.graph-area:has(#empty-state[hidden]) {
+    background-image: none;
+}
+
 @media (max-width: 850px) {
     .workspace {
         grid-template-columns: 210px 1fr;
