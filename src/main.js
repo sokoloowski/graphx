@@ -1,4 +1,4 @@
-import { OrbView, OrbEventType } from '@memgraph/orb';
+import { OrbEventType, OrbView } from '@memgraph/orb';
 import './style.css';
 
 const graphElement = document.querySelector('#graph');
@@ -10,6 +10,8 @@ const toast = document.querySelector('#toast');
 let orb;
 let model = { nodes: [], edges: [], directed: true };
 let selected = null;
+const physicsToggle = document.querySelector('#physics-toggle');
+let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
 const palette = ['#52d5bc', '#6fa8ff', '#ffad75', '#b792ff', '#f5d66f', '#f285aa'];
 const hash = (value) => [...String(value)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
@@ -97,7 +99,25 @@ function renderGraph(recenter = false) {
   const context = getSelectionContext();
   const nodes = model.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
   const edges = model.edges.map(edge => ({ id: edge.id, start: edge.start, end: edge.end, label: edge.label, ...edge.attributes }));
-  orb = new OrbView(graphElement);
+  const orbOptions = {
+    layout: {
+      type: 'force',
+      // Use API-correct force layout options
+      options: {
+        isPhysicsEnabled: Boolean(physicsEnabled),
+        useGPU: false,
+        // tweak forces and link distances for readability
+        links: { distance: 70, strength: 0.8, iterations: 1 },
+        manyBody: { strength: -120, theta: 0.9, distanceMin: 1, distanceMax: 5000 },
+        collision: { radius: 12, strength: 1, iterations: 1 }
+      }
+    },
+    render: {
+      node: { size: 10 }
+    }
+  };
+
+  orb = new OrbView(graphElement, orbOptions);
   orb.data.setup({ nodes, edges });
   orb.data.getNodes().forEach(node => {
     const data = node.getData(); const isActive = selected?.kind === 'node' && selected.id === String(data.id);
@@ -111,6 +131,16 @@ function renderGraph(recenter = false) {
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
   orb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
   orb.render(() => { if (recenter) orb.recenter(); });
+}
+
+// Listen to toggle changes and update settings live
+if (physicsToggle) {
+  physicsToggle.addEventListener('change', (e) => {
+    physicsEnabled = e.target.checked;
+    if (orb) {
+      orb.setSettings({ layout: { type: 'force', options: { isPhysicsEnabled: Boolean(physicsEnabled) } } });
+    }
+  });
 }
 
 function select(kind, id) {
