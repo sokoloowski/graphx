@@ -184,7 +184,18 @@ function renderGraph(recenter = false) {
   orb.events.on(OrbEventType.NODE_CLICK, ({ node }) => select('node', node.getData().id));
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
   orb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
-  orb.render(() => { if (recenter) orb.recenter(); });
+  orb.render(() => {
+    if (recenter) {
+      // try immediate recenter
+      try { orb.recenter(); } catch (e) { }
+      // also recenter once the force simulation ends (if any)
+      try {
+        orb.events.on(OrbEventType.SIMULATION_END, () => { try { orb.recenter(); } catch (e) { } });
+      } catch (e) { }
+      // fallback: recenter after a short delay in case simulation events aren't fired
+      setTimeout(() => { try { orb.recenter(); } catch (e) { } }, 600);
+    }
+  });
 }
 
 // Listen to toggle changes and update settings live
