@@ -57,30 +57,84 @@ function parseAttributes(source = '') {
 
 function parseDot(text) {
   const directed = /^\s*(strict\s+)?digraph\b/im.test(text);
-  const edgeOperator = directed ? '->' : '--';
-  const nodes = new Map(); const edges = [];
+  const nodes = new Map();
+  const edges = [];
   const getNode = (id, attrs = {}) => {
-    const key = id.replace(/^"|"$/g, '');
+    const key = String(id ?? '').trim().replace(/^"|"$/g, '');
+    if (key === '') return { id: '', label: '', type: attrs.type || 'node', attributes: {} };
     const existing = nodes.get(key) || { id: key, label: key, type: attrs.type || 'node', attributes: {} };
     existing.attributes = { ...existing.attributes, ...attrs };
     existing.label = String(attrs.label && attrs.label !== '\\N' ? attrs.label : existing.label);
     existing.type = String(attrs.type || existing.type);
-    nodes.set(key, existing); return existing;
+    nodes.set(key, existing);
+    return existing;
   };
-  const statement = /(?:"(?:\\.|[^"])*"|[\w.-]+)\s*(?:->|--)\s*(?:"(?:\\.|[^"])*"|[\w.-]+)(?:\s*\[([^\]]*)\])?|(?:"(?:\\.|[^"])*"|[\w.-]+)\s*\[([^\]]*)\]/g;
-  for (const match of text.matchAll(statement)) {
-    const full = match[0]; const operator = full.includes('->') ? '->' : full.includes('--') ? '--' : null;
-    if (operator) {
-      const [left, rightPart] = full.split(operator); const right = rightPart.split('[')[0].trim();
-      const start = getNode(left.trim()); const end = getNode(right);
-      const attrs = parseAttributes(match[1]);
-      edges.push({ id: `edge-${edges.length + 1}-${start.id}-${end.id}`, start: start.id, end: end.id, label: String(attrs.label ?? attrs.type ?? ''), attributes: attrs });
-    } else {
-      const id = full.split('[')[0].trim();
-      if (!/^(node|edge|graph)$/i.test(id)) getNode(id, parseAttributes(match[2]));
+
+  // split text into semicolon-terminated statements, respecting quotes and brackets
+  function splitStatements(src) {
+    const stmts = [];
+    let cur = '';
+    let inQuote = false;
+    let quoteChar = '\\0';
+    let bracketDepth = 0;
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      cur += ch;
+      if (inQuote) {
+        if (ch === quoteChar && src[i - 1] !== '\\') { inQuote = false; quoteChar = '\\0'; }
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inQuote = true; quoteChar = ch; continue; }
+      if (ch === '[') { bracketDepth++; continue; }
+      if (ch === ']') { if (bracketDepth > 0) bracketDepth--; continue; }
+      if (ch === ';' && bracketDepth === 0 && !inQuote) {
+        stmts.push(cur.slice(0, -1).trim());
+        cur = '';
+      }
     }
+    if (cur.trim()) stmts.push(cur.trim());
+    return stmts.filter(s => s.length > 0);
   }
-  if (!nodes.size) throw new Error('No nodes or edges found in the DOT file.');
+
+  const stmts = splitStatements(text.replace(/\r/g, ''));
+  for (let raw of stmts) {
+    const stmt = raw.trim();
+    if (!stmt || /^\s*\}?\s*$/.test(stmt)) continue;
+    // skip header
+    if (/^\s*(strict\s+)?digraph\b/i.test(stmt)) continue;
+    // edge statement
+    const opIndexArrow = stmt.indexOf('->');
+    const opIndexDash = stmt.indexOf('--');
+    let op = null; let opIdx = -1;
+    if (opIndexArrow !== -1 && (opIndexDash === -1 || opIndexArrow < opIndexDash)) { op = '->'; opIdx = opIndexArrow; }
+    else if (opIndexDash !== -1) { op = '--'; opIdx = opIndexDash; }
+    if (op) {
+      const left = stmt.slice(0, opIdx).trim();
+      let rest = stmt.slice(opIdx + op.length).trim();
+      // extract attribute list at end if present
+      let attrsText = '';
+      const m = rest.match(/\[([\s\S]*)\]$/);
+      if (m) { attrsText = m[1]; rest = rest.slice(0, m.index).trim(); }
+      const startNode = getNode(left.replace(/^"|"$/g, ''));
+      const endNode = getNode(rest.replace(/^"|"$/g, ''));
+      const attrs = parseAttributes(attrsText);
+      edges.push({ id: `edge-${edges.length + 1}-${startNode.id}-${endNode.id}`, start: startNode.id, end: endNode.id, label: String(attrs.label ?? attrs.type ?? ''), attributes: attrs });
+      continue;
+    }
+    // node attribute statement: id [attrs]
+    const nodeMatch = stmt.match(/^(.+?)\s*\[([\s\S]*)\]$/);
+    if (nodeMatch) {
+      const id = nodeMatch[1].trim().replace(/^"|"$/g, '');
+      if (!/^(node|edge|graph)$/i.test(id)) {
+        const attrs = parseAttributes(nodeMatch[2]);
+        getNode(id, attrs);
+      }
+      continue;
+    }
+    // if nothing matched, ignore
+  }
+
+  if (!nodes.size && edges.length === 0) throw new Error('No nodes or edges found in the DOT file.');
   return { nodes: [...nodes.values()], edges, directed };
 }
 
