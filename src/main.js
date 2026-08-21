@@ -198,6 +198,36 @@ function renderGraph(recenter = false) {
   });
 }
 
+function updateStyles() {
+  if (!orb) return;
+  const context = getSelectionContext();
+  orb.data.getNodes().forEach(node => {
+    const data = node.getData();
+    const isActive = selected?.kind === 'node' && selected.id === String(data.id);
+    node.setStyle({
+      label: String(data.label ?? data.id),
+      color: selected && !context.nodes.has(String(data.id)) ? '#25364b' : (isActive ? '#f7fbff' : colourFor(data.type)),
+      size: isActive ? 13 : 9,
+      borderColor: isActive ? '#6ea7ff' : '#d9ecff',
+      borderWidth: isActive ? 3 : 1,
+      fontColor: '#dce8f5',
+      fontSize: 11
+    });
+  });
+  orb.data.getEdges().forEach(edge => {
+    const data = edge.getData();
+    const isActive = context.edges.has(String(data.id));
+    edge.setStyle({
+      label: data.label || undefined,
+      color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'),
+      width: isActive ? 3 : 1.2,
+      fontColor: '#aebfd2',
+      fontSize: 9,
+      arrowSize: model.directed ? 7 : 0
+    });
+  });
+}
+
 // Listen to toggle changes and update settings live
 if (physicsToggle) {
   physicsToggle.addEventListener('change', (e) => {
@@ -212,10 +242,11 @@ function select(kind, id) {
   const item = (kind === 'node' ? model.nodes : model.edges).find(entry => entry.id === String(id));
   if (!item) return;
   selected = { kind, id: item.id, item };
-  showDetails(); renderGraph();
+  showDetails();
+  updateStyles();
 }
 
-function clearSelection() { if (!selected) return; selected = null; showDetails(); renderGraph(); }
+function clearSelection() { if (!selected) return; selected = null; showDetails(); updateStyles(); }
 
 function showDetails() {
   const details = document.querySelector('#selection-details'); const empty = document.querySelector('#selection-empty');
