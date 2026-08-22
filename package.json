@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@memgraph/orb": "^1.0.2"
+    "@memgraph/orb": "^1.0.2",
+    "dotparser": "^1.1.1"
   },
   "devDependencies": {
     "vite": "^7.0.0"

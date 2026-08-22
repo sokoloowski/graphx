@@ -1,4 +1,5 @@
 import { OrbEventType, OrbView } from '@memgraph/orb';
+import parseDotSource from 'dotparser';
 import './style.css';
 
 const graphElement = document.querySelector('#graph');
@@ -45,16 +46,6 @@ function parseNodeLink(text) {
   return { nodes, edges, directed: data.directed !== false };
 }
 
-function parseAttributes(source = '') {
-  const result = {};
-  const matcher = /([\w.-]+)\s*=\s*("(?:\\.|[^"])*"|\[[^\]]*\]|[^,\s\]]+)/g;
-  for (const match of source.matchAll(matcher)) {
-    const raw = match[2].replace(/^"|"$/g, '').replace(/\\"/g, '"');
-    result[match[1]] = /^(true|false)$/i.test(raw) ? raw.toLowerCase() === 'true' : (!Number.isNaN(Number(raw)) && raw.trim() !== '' ? Number(raw) : raw);
-  }
-  return result;
-}
-
 function parseDot(text) {
   const directed = /^\s*(strict\s+)?digraph\b/im.test(text);
   const nodes = new Map();
@@ -70,69 +61,73 @@ function parseDot(text) {
     return existing;
   };
 
-  // split text into semicolon-terminated statements, respecting quotes and brackets
-  function splitStatements(src) {
-    const stmts = [];
-    let cur = '';
-    let inQuote = false;
-    let quoteChar = '\\0';
-    let bracketDepth = 0;
-    for (let i = 0; i < src.length; i++) {
-      const ch = src[i];
-      cur += ch;
-      if (inQuote) {
-        if (ch === quoteChar && src[i - 1] !== '\\') { inQuote = false; quoteChar = '\\0'; }
-        continue;
-      }
-      if (ch === '"' || ch === "'") { inQuote = true; quoteChar = ch; continue; }
-      if (ch === '[') { bracketDepth++; continue; }
-      if (ch === ']') { if (bracketDepth > 0) bracketDepth--; continue; }
-      if (ch === ';' && bracketDepth === 0 && !inQuote) {
-        stmts.push(cur.slice(0, -1).trim());
-        cur = '';
+  // dotparser returns an AST; walk it and map onto normalized node/edge records.
+  const coerce = (value) => {
+    if (typeof value !== 'string') return value;
+    return /^(true|false)$/i.test(value) ? value.toLowerCase() === 'true'
+      : (!Number.isNaN(Number(value)) && value.trim() !== '' ? Number(value) : value);
+  };
+  const toAttrs = (attrList = []) => {
+    const result = {};
+    for (const entry of attrList.flat()) {
+      if (entry?.type === 'attr') {
+        // skip Graphviz's "\N" placeholder — it means "use the node id as label"
+        // and is not a meaningful attribute value
+        if (entry.id === 'label' && entry.eq === '\\N') continue;
+        result[entry.id] = coerce(entry.eq);
       }
     }
-    if (cur.trim()) stmts.push(cur.trim());
-    return stmts.filter(s => s.length > 0);
+    return result;
+  };
+
+  let defaultNodeAttrs = {};
+  let defaultEdgeAttrs = {};
+
+  const endpointId = (endpoint) => {
+    if (!endpoint) return '';
+    if (endpoint.type === 'node_id') return String(endpoint.id ?? '');
+    if (endpoint.type === 'subgraph') {
+      for (const child of endpoint.children ?? []) {
+        const id = endpointId(child.type === 'node_stmt' ? child.node_id : child);
+        if (id) return id;
+      }
+      return '';
+    }
+    return '';
+  };
+
+  function walk(children) {
+    for (const stmt of children ?? []) {
+      switch (stmt.type) {
+        case 'node_stmt': {
+          getNode(stmt.node_id?.id, { ...defaultNodeAttrs, ...toAttrs(stmt.attr_list) });
+          break;
+        }
+        case 'edge_stmt': {
+          const list = stmt.edge_list ?? [];
+          const attrs = { ...defaultEdgeAttrs, ...toAttrs(stmt.attr_list) };
+          for (let i = 0; i + 1 < list.length; i++) {
+            const startNode = getNode(endpointId(list[i]));
+            const endNode = getNode(endpointId(list[i + 1]));
+            edges.push({ id: `edge-${edges.length + 1}-${startNode.id}-${endNode.id}`, start: startNode.id, end: endNode.id, label: String(attrs.label ?? attrs.type ?? ''), attributes: attrs });
+          }
+          break;
+        }
+        case 'attr_stmt':
+          if (/^node$/i.test(stmt.target ?? '')) defaultNodeAttrs = { ...defaultNodeAttrs, ...toAttrs(stmt.attr_list) };
+          else if (/^edge$/i.test(stmt.target ?? '')) defaultEdgeAttrs = { ...defaultEdgeAttrs, ...toAttrs(stmt.attr_list) };
+          break;
+        case 'subgraph':
+          walk(stmt.children);
+          break;
+        default:
+          break;
+      }
+    }
   }
 
-  const stmts = splitStatements(text.replace(/\r/g, ''));
-  for (let raw of stmts) {
-    const stmt = raw.trim();
-    if (!stmt || /^\s*\}?\s*$/.test(stmt)) continue;
-    // skip header
-    if (/^\s*(strict\s+)?digraph\b/i.test(stmt)) continue;
-    // edge statement
-    const opIndexArrow = stmt.indexOf('->');
-    const opIndexDash = stmt.indexOf('--');
-    let op = null; let opIdx = -1;
-    if (opIndexArrow !== -1 && (opIndexDash === -1 || opIndexArrow < opIndexDash)) { op = '->'; opIdx = opIndexArrow; }
-    else if (opIndexDash !== -1) { op = '--'; opIdx = opIndexDash; }
-    if (op) {
-      const left = stmt.slice(0, opIdx).trim();
-      let rest = stmt.slice(opIdx + op.length).trim();
-      // extract attribute list at end if present
-      let attrsText = '';
-      const m = rest.match(/\[([\s\S]*)\]$/);
-      if (m) { attrsText = m[1]; rest = rest.slice(0, m.index).trim(); }
-      const startNode = getNode(left.replace(/^"|"$/g, ''));
-      const endNode = getNode(rest.replace(/^"|"$/g, ''));
-      const attrs = parseAttributes(attrsText);
-      edges.push({ id: `edge-${edges.length + 1}-${startNode.id}-${endNode.id}`, start: startNode.id, end: endNode.id, label: String(attrs.label ?? attrs.type ?? ''), attributes: attrs });
-      continue;
-    }
-    // node attribute statement: id [attrs]
-    const nodeMatch = stmt.match(/^(.+?)\s*\[([\s\S]*)\]$/);
-    if (nodeMatch) {
-      const id = nodeMatch[1].trim().replace(/^"|"$/g, '');
-      if (!/^(node|edge|graph)$/i.test(id)) {
-        const attrs = parseAttributes(nodeMatch[2]);
-        getNode(id, attrs);
-      }
-      continue;
-    }
-    // if nothing matched, ignore
-  }
+  const ast = parseDotSource(text.replace(/\r/g, ''));
+  for (const graph of ast) walk(graph.children);
 
   if (!nodes.size && edges.length === 0) throw new Error('No nodes or edges found in the DOT file.');
   return { nodes: [...nodes.values()], edges, directed };
