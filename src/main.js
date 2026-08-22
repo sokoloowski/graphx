@@ -180,7 +180,7 @@ function renderGraph(recenter = false) {
   });
   orb.data.getEdges().forEach(edge => {
     const data = edge.getData(); const isActive = context.edges.has(String(data.id));
-    edge.setStyle({ label: data.label || undefined, color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'), width: isActive ? 3 : 1.2, fontColor: '#aebfd2', fontSize: 9, arrowSize: model.directed ? 7 : 0 });
+    edge.setStyle({ label: data.label || undefined, color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'), width: 1.2, fontColor: '#aebfd2', fontSize: 9, arrowSize: model.directed ? 3 : 0 });
   });
   orb.events.on(OrbEventType.NODE_CLICK, ({ node }) => select('node', node.getData().id));
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
@@ -221,10 +221,10 @@ function updateStyles() {
     edge.setStyle({
       label: data.label || undefined,
       color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'),
-      width: isActive ? 3 : 1.2,
+      width: 1.2,
       fontColor: '#aebfd2',
       fontSize: 9,
-      arrowSize: model.directed ? 7 : 0
+      arrowSize: model.directed ? 3 : 0
     });
   });
 }
