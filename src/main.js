@@ -15,8 +15,14 @@ const physicsToggle = document.querySelector('#physics-toggle');
 let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
 const palette = ['#52d5bc', '#6fa8ff', '#ffad75', '#b792ff', '#f5d66f', '#f285aa'];
-const hash = (value) => [...String(value)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
-const colourFor = (type) => palette[Math.abs(hash(type || 'node')) % palette.length];
+// Assign colours by first-seen order of the type instead of hashing — hashing
+// collides frequently on small palettes (e.g. "image" vs "detection").
+const typeColours = new Map();
+const colourFor = (type) => {
+  const key = String(type || 'node');
+  if (!typeColours.has(key)) typeColours.set(key, palette[typeColours.size % palette.length]);
+  return typeColours.get(key);
+};
 const display = (value) => typeof value === 'object' ? JSON.stringify(value) : String(value);
 
 function normalizeNode(node, index) {
