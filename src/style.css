@@ -16,6 +16,7 @@ body {
     min-width: 320px;
     min-height: 100vh;
     background: #0b1422;
+    overflow: hidden;
 }
 
 button,
@@ -25,6 +26,8 @@ input {
 
 .app-shell {
     min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
 }
@@ -186,6 +189,7 @@ input {
     background: #101d2e;
     padding: 25px 19px;
     border-right: 1px solid #203049;
+    min-height: 0;
     overflow: auto;
 }
 
