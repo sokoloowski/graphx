@@ -12,6 +12,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 - Interactive pan & zoom, node/edge selection, and attribute inspection
 - Force-directed layout (physics)
 - Auto-fit view on load and after simulation ends
+- Dark and light themes, with the choice remembered between visits
 
 ## Requirements
 
@@ -33,7 +34,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 
 - Drag-and-drop a graph file into the main area or use the "Load file" button.
 - Example data is available via sidebar buttons: `examples/nodelink.json` and `examples/graphviz.dot`.
-- Controls in the header: `Fit view` button and `Physics` toggle.
+- Controls in the header: `Fit view` button, `Physics` toggle, and the `Light` theme toggle.
 - Click a node or edge to see attributes in the details panel.
 
 ## File formats

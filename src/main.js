@@ -14,14 +14,34 @@ let selected = null;
 const physicsToggle = document.querySelector('#physics-toggle');
 let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
-const palette = ['#52d5bc', '#6fa8ff', '#ffad75', '#b792ff', '#f5d66f', '#f285aa'];
+const themeToggle = document.querySelector('#theme-toggle');
+const themeToggleLabel = document.querySelector('#theme-toggle-label');
+const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+const THEME_KEY = 'graphx-theme';
+
+// One palette per theme; the light variant is darkened so nodes keep contrast
+// against a light canvas.
+const palettes = {
+  dark: ['#52d5bc', '#6fa8ff', '#ffad75', '#b792ff', '#f5d66f', '#f285aa'],
+  light: ['#0f9e83', '#2f6fe0', '#c96a12', '#7b4fd8', '#a38000', '#d33f77']
+};
+
+// Canvas colours (labels, edges, borders) Orb cannot inherit from CSS.
+const canvasColors = {
+  dark: { nodeLabel: '#dce8f5', nodeBorder: '#d9ecff', nodeActive: '#f7fbff', nodeMuted: '#25364b', activeBorder: '#6ea7ff', edgeLabel: '#aebfd2', edge: '#839bb5', edgeMuted: '#24364c', edgeActive: '#65cdb9' },
+  light: { nodeLabel: '#1d2b3a', nodeBorder: '#2a3a4a', nodeActive: '#e3edfd', nodeMuted: '#c9d6e3', activeBorder: '#2f6fe0', edgeLabel: '#4c5f72', edge: '#7c8e9e', edgeMuted: '#d2dce6', edgeActive: '#0f9e83' }
+};
+
+let theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+
 // Assign colours by first-seen order of the type instead of hashing — hashing
 // collides frequently on small palettes (e.g. "image" vs "detection").
-const typeColours = new Map();
+const typeOrder = new Map();
 const colourFor = (type) => {
   const key = String(type || 'node');
-  if (!typeColours.has(key)) typeColours.set(key, palette[typeColours.size % palette.length]);
-  return typeColours.get(key);
+  if (!typeOrder.has(key)) typeOrder.set(key, typeOrder.size);
+  const palette = palettes[theme];
+  return palette[typeOrder.get(key) % palette.length];
 };
 const display = (value) => typeof value === 'object' ? JSON.stringify(value) : String(value);
 
@@ -151,7 +171,6 @@ function getSelectionContext() {
 
 function renderGraph(recenter = false) {
   if (orb) { orb.destroy?.(); graphElement.replaceChildren(); }
-  const context = getSelectionContext();
   const nodes = model.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
   const edges = model.edges.map(edge => ({ id: edge.id, start: edge.start, end: edge.end, label: edge.label, ...edge.attributes }));
   const orbOptions = {
@@ -174,14 +193,7 @@ function renderGraph(recenter = false) {
 
   orb = new OrbView(graphElement, orbOptions);
   orb.data.setup({ nodes, edges });
-  orb.data.getNodes().forEach(node => {
-    const data = node.getData(); const isActive = selected?.kind === 'node' && selected.id === String(data.id);
-    node.setStyle({ label: String(data.label ?? data.id), color: selected && !context.nodes.has(String(data.id)) ? '#25364b' : (isActive ? '#f7fbff' : colourFor(data.type)), size: isActive ? 13 : 9, borderColor: isActive ? '#6ea7ff' : '#d9ecff', borderWidth: isActive ? 3 : 1, fontColor: '#dce8f5', fontSize: 11 });
-  });
-  orb.data.getEdges().forEach(edge => {
-    const data = edge.getData(); const isActive = context.edges.has(String(data.id));
-    edge.setStyle({ label: data.label || undefined, color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'), width: 1.2, fontColor: '#aebfd2', fontSize: 9, arrowSize: model.directed ? 3 : 0 });
-  });
+  styleElements();
   orb.events.on(OrbEventType.NODE_CLICK, ({ node }) => select('node', node.getData().id));
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
   orb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
@@ -199,19 +211,20 @@ function renderGraph(recenter = false) {
   });
 }
 
-function updateStyles() {
+function styleElements() {
   if (!orb) return;
   const context = getSelectionContext();
+  const colors = canvasColors[theme];
   orb.data.getNodes().forEach(node => {
     const data = node.getData();
     const isActive = selected?.kind === 'node' && selected.id === String(data.id);
     node.setStyle({
       label: String(data.label ?? data.id),
-      color: selected && !context.nodes.has(String(data.id)) ? '#25364b' : (isActive ? '#f7fbff' : colourFor(data.type)),
+      color: selected && !context.nodes.has(String(data.id)) ? colors.nodeMuted : (isActive ? colors.nodeActive : colourFor(data.type)),
       size: isActive ? 13 : 9,
-      borderColor: isActive ? '#6ea7ff' : '#d9ecff',
+      borderColor: isActive ? colors.activeBorder : colors.nodeBorder,
       borderWidth: isActive ? 3 : 1,
-      fontColor: '#dce8f5',
+      fontColor: colors.nodeLabel,
       fontSize: 11
     });
   });
@@ -220,14 +233,36 @@ function updateStyles() {
     const isActive = context.edges.has(String(data.id));
     edge.setStyle({
       label: data.label || undefined,
-      color: selected && !isActive ? '#24364c' : (isActive ? '#65cdb9' : '#839bb5'),
+      color: selected && !isActive ? colors.edgeMuted : (isActive ? colors.edgeActive : colors.edge),
       width: 1.2,
-      fontColor: '#aebfd2',
+      fontColor: colors.edgeLabel,
       fontSize: 9,
       arrowSize: model.directed ? 3 : 0
     });
   });
 }
+
+function applyTheme(next, { persist = true } = {}) {
+  theme = next === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  if (themeToggle) themeToggle.checked = theme === 'light';
+  if (themeToggleLabel) {
+    const target = theme === 'light' ? 'dark' : 'light';
+    themeToggleLabel.title = `Switch to ${target} theme`;
+  }
+  themeColorMeta?.setAttribute('content', theme === 'light' ? '#f4f7fa' : '#101d2e');
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, theme); } catch (error) { /* ignore unavailable storage */ }
+  }
+  // Orb draws on a canvas, so its colours must be re-applied by hand.
+  styleElements();
+}
+
+if (themeToggle) {
+  themeToggle.checked = theme === 'light';
+  themeToggle.addEventListener('change', (event) => applyTheme(event.target.checked ? 'light' : 'dark'));
+}
+applyTheme(theme, { persist: false });
 
 // Listen to toggle changes and update settings live
 if (physicsToggle) {
@@ -244,10 +279,10 @@ function select(kind, id) {
   if (!item) return;
   selected = { kind, id: item.id, item };
   showDetails();
-  updateStyles();
+  styleElements();
 }
 
-function clearSelection() { if (!selected) return; selected = null; showDetails(); updateStyles(); }
+function clearSelection() { if (!selected) return; selected = null; showDetails(); styleElements(); }
 
 function showDetails() {
   const details = document.querySelector('#selection-details'); const empty = document.querySelector('#selection-empty');
