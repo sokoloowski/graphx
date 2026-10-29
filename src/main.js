@@ -271,11 +271,14 @@ function renderSchema(recenter = false) {
   schemaOrb.events.on(OrbEventType.NODE_CLICK, ({ node }) => selectSchemaKind('type', node.getData().id));
   schemaOrb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => selectSchemaKind('relationship', edge.getData().id));
   schemaOrb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
+  keepPhysicsRunning(schemaOrb);
   schemaOrb.render(() => {
     renderSchemaMeta();
     if (recenter) {
       try { schemaOrb.recenter(); } catch (error) { /* view may not be ready yet */ }
-      try { schemaOrb.events.on(OrbEventType.SIMULATION_END, () => { try { schemaOrb.recenter(); } catch (error) { /* ignore */ } }); } catch (error) { /* ignore */ }
+      // `once`: a permanent listener would re-fit the view every time the
+      // simulation settles (including after every node drag).
+      try { schemaOrb.events.once(OrbEventType.SIMULATION_END, () => { try { schemaOrb.recenter(); } catch (error) { /* ignore */ } }); } catch (error) { /* ignore */ }
       setTimeout(() => { try { schemaOrb.recenter(); } catch (error) { /* ignore */ } }, 700);
     }
   });
@@ -400,17 +403,39 @@ function renderGraph(recenter = false) {
   orb.events.on(OrbEventType.NODE_CLICK, ({ node }) => select('node', node.getData().id));
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
   orb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
+  keepPhysicsRunning(orb);
   orb.render(() => {
     if (recenter) {
       // try immediate recenter
       try { orb.recenter(); } catch (e) { }
-      // also recenter once the force simulation ends (if any)
+      // also recenter once the force simulation ends (if any) — `once`, because
+      // a permanent listener re-fits the view every time the layout settles,
+      // e.g. right after a node drag, which looks like an unwanted zoom jump.
       try {
-        orb.events.on(OrbEventType.SIMULATION_END, () => { try { orb.recenter(); } catch (e) { } });
+        orb.events.once(OrbEventType.SIMULATION_END, () => { try { orb.recenter(); } catch (e) { } });
       } catch (e) { }
       // fallback: recenter after a short delay in case simulation events aren't fired
       setTimeout(() => { try { orb.recenter(); } catch (e) { } }, 600);
     }
+  });
+}
+
+// Orb stops its d3 simulation as soon as alpha decays below alphaMin. Dragging a
+// node restarts it, but the restart only happens once, at drag start — so a slow
+// drag, or simply pausing before releasing the node, lets alpha run out while
+// the pointer is still down. From that point on the engine has no running
+// simulation: releasing the node only unpins it and the whole layout freezes,
+// which reads as "physics stopped working after dropping a node". Re-arm the
+// simulation whenever a drag ends and nothing is running any more.
+function keepPhysicsRunning(view) {
+  let running = false;
+  view.events.on(OrbEventType.SIMULATION_START, () => { running = true; });
+  view.events.on(OrbEventType.SIMULATION_END, () => { running = false; });
+  view.events.on(OrbEventType.NODE_DRAG_END, () => {
+    if (running || !physicsEnabled) return;
+    // releaseNodes() clears the per-node pin and restarts the simulation
+    // (isSimulatingOnUnstick is on by default), so the layout moves again.
+    try { view.releaseNodes(); } catch (error) { /* view may have been replaced */ }
   });
 }
 
