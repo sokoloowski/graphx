@@ -58,17 +58,30 @@
         </div>
       </aside>
       <section class="graph-area">
-        <div id="graph" aria-label="Interactive graph visualization"></div>
-        <div id="empty-state" class="empty-state">
-          <span class="empty-orb">◌</span>
-          <h1>Discover connections in your data</h1>
-          <p>Drag a file into the app or pick one of the samples.</p>
+        <div class="view-tabs" role="tablist" aria-label="View">
+          <button class="view-tab is-active" type="button" role="tab" data-view="graph"
+            aria-selected="true">Graph</button>
+          <button class="view-tab" type="button" role="tab" data-view="schema" aria-selected="false">Schema</button>
+          <span id="view-hint" class="view-hint"></span>
         </div>
-        <div class="canvas-hint">Scroll to zoom · drag to pan</div>
-        <div id="toast" class="toast" role="alert"></div>
+        <div class="canvas-stack">
+          <div id="graph-slot" class="canvas-slot">
+            <div id="graph" aria-label="Interactive graph visualization"></div>
+          </div>
+          <div id="schema-slot" class="canvas-slot is-hidden">
+            <div id="schema" aria-label="Graph schema visualization"></div>
+          </div>
+          <div id="empty-state" class="empty-state">
+            <span class="empty-orb">◌</span>
+            <h1>Discover connections in your data</h1>
+            <p>Drag a file into the app or pick one of the samples.</p>
+          </div>
+          <div class="canvas-hint">Scroll to zoom · drag to pan</div>
+          <div id="toast" class="toast" role="alert"></div>
+        </div>
       </section>
       <aside class="side-panel details-panel">
-        <p class="eyebrow">SELECTION DETAILS</p>
+        <p id="details-eyebrow" class="eyebrow">SELECTION DETAILS</p>
         <div id="selection-empty" class="selection-empty"><span>◎</span>
           <p>Click a node or edge to see its attributes and relationships.</p>
         </div>

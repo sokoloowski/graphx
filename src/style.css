@@ -405,15 +405,75 @@ input {
     background-image: radial-gradient(var(--canvas-dot) 0.7px, transparent .7px);
     background-size: 22px 22px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
-.graph-area:has(#empty-state[hidden]) {
-    background-image: radial-gradient(var(--canvas-dot) 0.7px, transparent .7px);
+/* Graph | Schema switcher */
+.view-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    z-index: 2;
 }
 
-.graph-area>#graph {
+.view-tab {
+    padding: 6px 13px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    cursor: pointer;
+}
+
+.view-tab:hover {
+    color: var(--text-strong);
+    background: var(--sample-hover-bg);
+}
+
+.view-tab.is-active {
+    color: var(--text-strong);
+    background: var(--control-bg);
+    border-color: var(--control-border);
+}
+
+.view-hint {
+    margin-left: auto;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+}
+
+.canvas-stack {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Each view gets its own full-size slot; Orb writes `position: relative` onto
+   the container it is given, so the slot (not the container) does the absolute
+   positioning. The inactive slot is only hidden visually — `display: none`
+   would make Orb measure a 0×0 container and fit-zoom to nothing. */
+.canvas-slot {
     position: absolute;
     inset: 0;
+}
+
+.canvas-slot.is-hidden {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.canvas-slot>#graph,
+.canvas-slot>#schema {
+    height: 100%;
+    width: 100%;
 }
 
 .empty-state {
@@ -570,10 +630,6 @@ input {
     display: none;
 }
 
-.graph-area:has(#empty-state[hidden]) {
-    background-image: none;
-}
-
 @media (max-width: 850px) {
     .workspace {
         grid-template-columns: 210px 1fr;
@@ -610,6 +666,10 @@ input {
     }
 
     .toggle-text {
+        display: none;
+    }
+
+    .view-hint {
         display: none;
     }
 }

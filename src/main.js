@@ -3,14 +3,24 @@ import parseDotSource from 'dotparser';
 import './style.css';
 
 const graphElement = document.querySelector('#graph');
+const schemaElement = document.querySelector('#schema');
+const graphSlot = document.querySelector('#graph-slot');
+const schemaSlot = document.querySelector('#schema-slot');
+const viewTabs = [...document.querySelectorAll('.view-tab')];
+const viewHint = document.querySelector('#view-hint');
 const emptyState = document.querySelector('#empty-state');
 const dropZone = document.querySelector('#drop-zone');
 const fileInput = document.querySelector('#file-input');
 const meta = document.querySelector('#graph-meta');
 const toast = document.querySelector('#toast');
 let orb;
+let schemaOrb;
 let model = { nodes: [], edges: [], directed: true };
 let selected = null;
+let schemaSelection = null;
+let schemaModel = { nodes: [], edges: [], types: new Map(), relationTypes: new Map() };
+let currentView = 'graph';
+let hasGraph = false;
 const physicsToggle = document.querySelector('#physics-toggle');
 let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
@@ -169,6 +179,199 @@ function getSelectionContext() {
   return { nodes: new Set([selected.item.start, selected.item.end]), edges: new Set([selected.id]) };
 }
 
+// ---------------------------------------------------------------------------
+// Schema view
+//
+// Memgraph Lab style: one node per node type, one edge per relationship type
+// between two node types. Aggregating the loaded graph into a type-level model
+// keeps the diagram readable no matter how many instances there are.
+// ---------------------------------------------------------------------------
+function buildSchema() {
+  const types = new Map();
+  const typeOfNode = new Map();
+  model.nodes.forEach(node => {
+    const type = node.type || 'node';
+    typeOfNode.set(node.id, type);
+    const entry = types.get(type) ?? { id: type, type, count: 0, attributes: new Set() };
+    entry.count += 1;
+    Object.keys(node.attributes ?? {}).forEach(key => entry.attributes.add(key));
+    types.set(type, entry);
+  });
+
+  const relations = new Map();
+  // Distinct (start, type, end) triples, counted separately from the drawn
+  // edges because self-loops collapse into a single circle.
+  const relationTypes = new Map();
+  model.edges.forEach(edge => {
+    let start = typeOfNode.get(edge.start) ?? 'unknown';
+    let end = typeOfNode.get(edge.end) ?? 'unknown';
+    // Undirected graphs list the same relationship twice — fold it into one.
+    if (!model.directed && start > end) [start, end] = [end, start];
+    // A missing label means "no relationship type given" — do not invent one.
+    const relation = String(edge.label ?? edge.attributes?.type ?? edge.attributes?.label ?? '').trim();
+    const hasRelation = relation !== '';
+    relationTypes.set(`${start}|${relation}|${end}`, { start, end, type: relation });
+    // Orb draws one nested loop per edge between the same pair, so several
+    // self-relationship types would turn into a spiral. Keep a single loop per
+    // type and list the relationship types it stands for.
+    const isSelf = start === end;
+    const key = isSelf ? `${start}|self` : `${start}|${relation}|${end}`;
+    let existing = relations.get(key);
+    if (!existing) {
+      existing = { id: `schema-${relations.size + 1}-${key}`, start, end, labels: new Set(), count: 0, attributes: new Set(), isSelf, hasUnlabeled: false };
+      relations.set(key, existing);
+    }
+    if (hasRelation) existing.labels.add(relation);
+    else existing.hasUnlabeled = true;
+    existing.count += 1;
+    Object.keys(edge.attributes ?? {}).forEach(attr => existing.attributes.add(attr));
+  });
+
+  return { nodes: [...types.values()], edges: [...relations.values()], types, relationTypes };
+}
+
+// A schema edge may stand for several relationship types (all self-loops of one
+// type collapse into a single loop); keep the diagram label short and show the
+// full list in the details panel instead. Unlabelled edges get no label.
+function schemaEdgeLabel(entry) {
+  const labels = [...entry.labels];
+  if (labels.length === 0) return undefined;
+  return labels.length === 1 ? labels[0] : `${labels.length} types`;
+}
+
+let schemaDirty = false;
+
+function renderSchema(recenter = false) {
+  if (schemaOrb) { schemaOrb.destroy?.(); schemaElement.replaceChildren(); schemaOrb = undefined; }
+  if (!schemaModel.nodes.length) { renderSchemaMeta(); return; }
+  const nodes = schemaModel.nodes.map(entry => ({ id: entry.id, label: entry.id, count: entry.count }));
+  const edges = schemaModel.edges.map(entry => ({ id: entry.id, start: entry.start, end: entry.end, label: schemaEdgeLabel(entry), count: entry.count }));
+  schemaOrb = new OrbView(schemaElement, {
+    layout: {
+      type: 'force',
+      options: {
+        isPhysicsEnabled: Boolean(physicsEnabled),
+        useGPU: false,
+        // Types need more room than individual nodes so labels stay readable.
+        links: { distance: 170, strength: 0.7, iterations: 1 },
+        manyBody: { strength: -900, theta: 0.9, distanceMin: 1, distanceMax: 5000 },
+        collision: { radius: 60, strength: 1, iterations: 1 }
+      }
+    },
+    render: {
+      node: { size: 26 },
+      // A schema is usually a handful of types; without a zoom cap "fit view"
+      // blows a two-type schema up to a giant circle.
+      maxZoom: 1.15,
+      fitZoomMargin: 0.45
+    }
+  });
+  schemaOrb.data.setup({ nodes, edges });
+  styleSchema();
+  schemaOrb.events.on(OrbEventType.NODE_CLICK, ({ node }) => selectSchemaKind('type', node.getData().id));
+  schemaOrb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => selectSchemaKind('relationship', edge.getData().id));
+  schemaOrb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
+  schemaOrb.render(() => {
+    renderSchemaMeta();
+    if (recenter) {
+      try { schemaOrb.recenter(); } catch (error) { /* view may not be ready yet */ }
+      try { schemaOrb.events.on(OrbEventType.SIMULATION_END, () => { try { schemaOrb.recenter(); } catch (error) { /* ignore */ } }); } catch (error) { /* ignore */ }
+      setTimeout(() => { try { schemaOrb.recenter(); } catch (error) { /* ignore */ } }, 700);
+    }
+  });
+  schemaDirty = false;
+}
+
+function styleSchema() {
+  if (!schemaOrb) return;
+  const colors = canvasColors[theme];
+  const context = getSchemaSelectionContext();
+  schemaOrb.data.getNodes().forEach(node => {
+    const data = node.getData();
+    const isActive = schemaSelection?.kind === 'type' && schemaSelection.id === String(data.id);
+    const dimmed = Boolean(schemaSelection) && !context.types.has(String(data.id));
+    node.setStyle({
+      label: String(data.label ?? data.id),
+      shape: 'circle',
+      size: isActive ? 19 : 16,
+      color: dimmed ? colors.nodeMuted : colourFor(data.id),
+      borderColor: isActive ? colors.activeBorder : colors.nodeBorder,
+      borderWidth: isActive ? 4 : 1.5,
+      fontColor: dimmed ? colors.nodeMuted : colors.nodeLabel,
+      fontSize: 12
+    });
+  });
+  schemaOrb.data.getEdges().forEach(edge => {
+    const data = edge.getData();
+    const isActive = schemaSelection?.kind === 'relationship' && schemaSelection.id === String(data.id);
+    const dimmed = Boolean(schemaSelection) && !context.edges.has(String(data.id));
+    edge.setStyle({
+      label: data.label || undefined,
+      color: dimmed ? colors.edgeMuted : (isActive ? colors.edgeActive : colors.edge),
+      width: isActive ? 2.4 : 1.4,
+      fontColor: colors.edgeLabel,
+      fontSize: 10,
+      arrowSize: model.directed ? 4 : 0
+    });
+  });
+}
+
+function getSchemaSelectionContext() {
+  const types = new Set();
+  const edges = new Set();
+  if (!schemaSelection) return { types, edges };
+  if (schemaSelection.kind === 'type') {
+    types.add(schemaSelection.id);
+    schemaModel.edges.forEach(relation => {
+      if (relation.start !== schemaSelection.id && relation.end !== schemaSelection.id) return;
+      edges.add(relation.id); types.add(relation.start); types.add(relation.end);
+    });
+  } else {
+    const relation = schemaModel.edges.find(entry => entry.id === schemaSelection.id);
+    if (relation) { edges.add(relation.id); types.add(relation.start); types.add(relation.end); }
+  }
+  return { types, edges };
+}
+
+function selectSchemaKind(kind, id) {
+  const source = kind === 'type' ? schemaModel.nodes : schemaModel.edges;
+  const item = source.find(entry => String(entry.id) === String(id));
+  if (!item) return;
+  schemaSelection = { kind, id: String(item.id), item };
+  styleSchema();
+  showDetails();
+}
+
+function renderSchemaMeta() {
+  if (!viewHint) return;
+  if (currentView !== 'schema') { viewHint.textContent = ''; return; }
+  if (!schemaModel.nodes.length) { viewHint.textContent = 'No graph loaded'; return; }
+  const types = schemaModel.nodes.length;
+  // Count relationship types, not drawn edges: self-loops collapse into one.
+  const relations = schemaModel.relationTypes.size;
+  const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+  viewHint.textContent = `${plural(types, 'node type')} · ${plural(relations, 'relationship type')}`;
+}
+
+function setView(view) {
+  currentView = view === 'schema' ? 'schema' : 'graph';
+  viewTabs.forEach(tab => {
+    const active = tab.dataset.view === currentView;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  graphSlot.classList.toggle('is-hidden', currentView !== 'graph');
+  schemaSlot.classList.toggle('is-hidden', currentView !== 'schema');
+  // The welcome overlay is shown until a graph is loaded, in both views.
+  emptyState.hidden = hasGraph;
+  if (currentView === 'schema' && schemaDirty) renderSchema(true);
+  renderSchemaMeta();
+  // The details panel mirrors the active view's own selection state.
+  showDetails();
+}
+
+viewTabs.forEach(tab => tab.addEventListener('click', () => setView(tab.dataset.view)));
+
 function renderGraph(recenter = false) {
   if (orb) { orb.destroy?.(); graphElement.replaceChildren(); }
   const nodes = model.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
@@ -256,6 +459,7 @@ function applyTheme(next, { persist = true } = {}) {
   }
   // Orb draws on a canvas, so its colours must be re-applied by hand.
   styleElements();
+  styleSchema();
 }
 
 if (themeToggle) {
@@ -271,10 +475,14 @@ if (physicsToggle) {
     if (orb) {
       orb.setSettings({ layout: { type: 'force', options: { isPhysicsEnabled: Boolean(physicsEnabled) } } });
     }
+    if (schemaOrb) {
+      schemaOrb.setSettings({ layout: { type: 'force', options: { isPhysicsEnabled: Boolean(physicsEnabled) } } });
+    }
   });
 }
 
 function select(kind, id) {
+  if (currentView === 'schema') { selectSchemaKind(kind === 'node' ? 'type' : 'relationship', id); return; }
   const item = (kind === 'node' ? model.nodes : model.edges).find(entry => entry.id === String(id));
   if (!item) return;
   selected = { kind, id: item.id, item };
@@ -282,19 +490,69 @@ function select(kind, id) {
   styleElements();
 }
 
-function clearSelection() { if (!selected) return; selected = null; showDetails(); styleElements(); }
+function clearSelection() {
+  let changed = false;
+  if (selected) { selected = null; changed = true; }
+  if (schemaSelection) { schemaSelection = null; changed = true; styleSchema(); }
+  if (!changed) return;
+  showDetails();
+  styleElements();
+}
 
 function showDetails() {
   const details = document.querySelector('#selection-details'); const empty = document.querySelector('#selection-empty');
-  details.hidden = !selected; empty.hidden = Boolean(selected);
-  if (!selected) return;
-  const { kind, item } = selected;
-  const related = kind === 'node' ? model.edges.filter(e => e.start === item.id || e.end === item.id).length : 2;
-  document.querySelector('#selection-kind').textContent = kind === 'node' ? 'NODE' : 'EDGE';
-  document.querySelector('#selection-title').textContent = kind === 'node' ? item.label : `${item.start} → ${item.end}`;
+  const eyebrow = document.querySelector('#details-eyebrow');
+  const current = currentView === 'schema' ? schemaSelection : selected;
+  if (eyebrow) eyebrow.textContent = currentView === 'schema' ? 'SCHEMA DETAILS' : 'SELECTION DETAILS';
+  if (empty) {
+    empty.querySelector('p').textContent = currentView === 'schema'
+      ? 'Click a node type or relationship to see its aggregate details.'
+      : 'Click a node or edge to see its attributes and relationships.';
+  }
+  details.hidden = !current; empty.hidden = Boolean(current);
+  if (!current) return;
+  const kindBadge = document.querySelector('#selection-kind');
+  const title = document.querySelector('#selection-title');
+  const rows = {};
+  let related = 0;
+  let relatedLabel = '';
+
+  if (current === schemaSelection) {
+    // Schema entries are aggregated: show the counts instead of raw attributes.
+    if (current.kind === 'type') {
+      kindBadge.textContent = 'NODE TYPE';
+      title.textContent = current.item.id;
+      // Count relationship types (not drawn edges): several types can collapse
+      // into one edge, and unlabelled edges still count as one unnamed type.
+      related = [...schemaModel.relationTypes.values()]
+        .filter(relation => relation.start === current.item.id || relation.end === current.item.id).length;
+      relatedLabel = 'relationship types';
+      rows.type = current.item.id;
+      rows.nodes = current.item.count;
+      if (current.item.attributes.size) rows['attribute keys'] = [...current.item.attributes].join(', ');
+    } else {
+      kindBadge.textContent = current.item.isSelf ? 'SELF RELATIONSHIP' : 'RELATIONSHIP';
+      title.textContent = current.item.isSelf ? `${current.item.start} ⟲` : `${current.item.start} → ${current.item.end}`;
+      related = current.item.isSelf ? 1 : 2;
+      relatedLabel = 'node types';
+      // No label on the underlying edges means there is no type name to show.
+      if (current.item.labels.size) rows.type = [...current.item.labels].join(', ');
+      rows.start = current.item.start;
+      rows.end = current.item.end;
+      rows.edges = current.item.count;
+      if (current.item.attributes.size) rows['attribute keys'] = [...current.item.attributes].join(', ');
+    }
+  } else {
+    const { kind, item } = selected;
+    related = kind === 'node' ? model.edges.filter(e => e.start === item.id || e.end === item.id).length : 2;
+    kindBadge.textContent = kind === 'node' ? 'NODE' : 'EDGE';
+    title.textContent = kind === 'node' ? item.label : `${item.start} → ${item.end}`;
+    relatedLabel = kind === 'node' ? 'connected edges' : 'connected nodes';
+    Object.assign(rows, kind === 'node' ? { id: item.id, type: item.type, ...item.attributes } : { id: item.id, source: item.start, target: item.end, ...item.attributes });
+  }
+
   document.querySelector('#relationship-count').textContent = related;
-  document.querySelector('#relationship-label').textContent = kind === 'node' ? 'connected edges' : 'connected nodes';
-  const rows = kind === 'node' ? { id: item.id, type: item.type, ...item.attributes } : { id: item.id, source: item.start, target: item.end, ...item.attributes };
+  document.querySelector('#relationship-label').textContent = relatedLabel;
   document.querySelector('#attributes').replaceChildren(...Object.entries(rows).map(([key, value]) => {
     const dt = document.createElement('dt'); dt.textContent = key;
     const dd = document.createElement('dd'); dd.textContent = display(value);
@@ -306,7 +564,20 @@ function showDetails() {
 function load(text, name) {
   try {
     model = /^\s*(strict\s+)?(di)?graph\b/i.test(text) ? parseDot(text) : parseNodeLink(text);
-    selected = null; emptyState.hidden = true; showDetails(); renderGraph(true);
+    selected = null; schemaSelection = null;
+    const previousTypes = [...typeOrder.keys()].sort().join('|');
+    typeOrder.clear();
+    // Keep type colours stable across reloads when the same types are present.
+    const stableTypes = previousTypes.split('|').filter(Boolean);
+    stableTypes.forEach(type => { if (model.nodes.some(node => node.type === type)) colourFor(type); });
+    schemaModel = buildSchema();
+    schemaDirty = true;
+    hasGraph = true;
+    if (schemaOrb) { schemaOrb.destroy?.(); schemaElement.replaceChildren(); schemaOrb = undefined; }
+    emptyState.hidden = true;
+    showDetails(); renderGraph(true);
+    if (currentView === 'schema') renderSchema(true);
+    renderSchemaMeta();
     meta.textContent = `${name} · ${model.nodes.length} nodes · ${model.edges.length} edges`;
     message(`Loaded "${name}"`);
   } catch (error) { message(error.message || 'Failed to read the file.', true); }
@@ -317,7 +588,7 @@ function handleFile(file) { if (!file) return; file.text().then(text => load(tex
 
 fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
 document.querySelector('#browse-button').addEventListener('click', () => fileInput.click());
-document.querySelector('#fit-button').addEventListener('click', () => orb?.recenter());
+document.querySelector('#fit-button').addEventListener('click', () => currentView === 'schema' ? schemaOrb?.recenter() : orb?.recenter());
 document.querySelector('#clear-selection').addEventListener('click', clearSelection);
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') fileInput.click(); });
