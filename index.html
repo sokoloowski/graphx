@@ -62,6 +62,7 @@
           <button class="view-tab is-active" type="button" role="tab" data-view="graph"
             aria-selected="true">Graph</button>
           <button class="view-tab" type="button" role="tab" data-view="schema" aria-selected="false">Schema</button>
+          <button class="view-tab" type="button" role="tab" data-view="editor" aria-selected="false">Editor</button>
           <span id="view-hint" class="view-hint"></span>
         </div>
         <div class="canvas-stack">
@@ -70,6 +71,22 @@
           </div>
           <div id="schema-slot" class="canvas-slot is-hidden">
             <div id="schema" aria-label="Graph schema visualization"></div>
+          </div>
+          <div id="editor-slot" class="canvas-slot is-hidden">
+            <div class="editor-pane">
+              <div class="editor-head">
+                <p class="eyebrow">GRAPH SOURCE</p>
+                <span id="editor-format" class="editor-format"></span>
+                <button id="editor-open" type="button" class="text-button">Open in explorer</button>
+              </div>
+              <textarea id="graph-source" class="source-editor" spellcheck="false" autocapitalize="off"
+                autocomplete="off" wrap="off" aria-label="Graph source (Graphviz DOT or Node-Link JSON)"
+                placeholder="digraph {&#10;  a -> b [label=&quot;calls&quot;]&#10;}"></textarea>
+            </div>
+            <div class="editor-preview">
+              <div id="preview" aria-label="Live graph preview"></div>
+              <div id="editor-status" class="editor-status"></div>
+            </div>
           </div>
           <div id="empty-state" class="empty-state">
             <span class="empty-orb">◌</span>

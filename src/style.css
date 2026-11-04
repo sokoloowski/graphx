@@ -476,6 +476,112 @@ input {
     width: 100%;
 }
 
+/* Editor view: source on the left, live Orb preview on the right */
+#editor-slot {
+    display: grid;
+    grid-template-columns: minmax(260px, 42%) 1fr;
+    background: var(--surface);
+}
+
+.editor-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+    background: var(--canvas-bg);
+}
+
+.editor-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.editor-head .eyebrow {
+    margin: 0;
+}
+
+.editor-format {
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--badge-bg);
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .1em;
+}
+
+.editor-head .text-button {
+    margin-left: auto;
+}
+
+.source-editor {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    padding: 14px 16px;
+    border: 0;
+    border-radius: 0;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    tab-size: 2;
+    white-space: pre;
+    overflow: auto;
+}
+
+.source-editor:focus {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.source-editor::placeholder {
+    color: var(--text-dim);
+}
+
+.editor-preview {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background-color: var(--canvas-bg);
+    background-image: radial-gradient(var(--canvas-dot) 0.7px, transparent .7px);
+    background-size: 22px 22px;
+}
+
+.editor-preview>#preview {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+}
+
+.editor-status {
+    flex: none;
+    padding: 7px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}
+
+.editor-status.is-error {
+    color: var(--toast-error-border);
+}
+
+.editor-status.is-idle {
+    color: var(--text-dim);
+}
+
 .empty-state {
     position: absolute;
     inset: 0;
@@ -511,6 +617,11 @@ input {
     color: var(--text-dim);
     font-size: 10px;
     pointer-events: none;
+}
+
+/* The hint and the welcome overlay belong to the graph/schema canvases. */
+.canvas-stack.is-editor .canvas-hint {
+    display: none;
 }
 
 .toast {
@@ -637,6 +748,17 @@ input {
 
     .details-panel {
         display: none;
+    }
+
+    /* Stack source above preview when the panels leave too little width. */
+    #editor-slot {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(0, 45%) minmax(0, 1fr);
+    }
+
+    .editor-pane {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
     }
 
     .topbar {

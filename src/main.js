@@ -6,6 +6,13 @@ const graphElement = document.querySelector('#graph');
 const schemaElement = document.querySelector('#schema');
 const graphSlot = document.querySelector('#graph-slot');
 const schemaSlot = document.querySelector('#schema-slot');
+const editorSlot = document.querySelector('#editor-slot');
+const canvasStack = document.querySelector('.canvas-stack');
+const previewElement = document.querySelector('#preview');
+const sourceEditor = document.querySelector('#graph-source');
+const editorFormat = document.querySelector('#editor-format');
+const editorStatus = document.querySelector('#editor-status');
+const editorOpen = document.querySelector('#editor-open');
 const viewTabs = [...document.querySelectorAll('.view-tab')];
 const viewHint = document.querySelector('#view-hint');
 const emptyState = document.querySelector('#empty-state');
@@ -15,12 +22,16 @@ const meta = document.querySelector('#graph-meta');
 const toast = document.querySelector('#toast');
 let orb;
 let schemaOrb;
+let previewOrb;
 let model = { nodes: [], edges: [], directed: true };
 let selected = null;
 let schemaSelection = null;
+let previewSelection = null;
+let previewModel = { nodes: [], edges: [], directed: true };
 let schemaModel = { nodes: [], edges: [], types: new Map(), relationTypes: new Map() };
 let currentView = 'graph';
 let hasGraph = false;
+let hasEditorSeed = false;
 const physicsToggle = document.querySelector('#physics-toggle');
 let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
@@ -46,13 +57,18 @@ let theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark
 
 // Assign colours by first-seen order of the type instead of hashing — hashing
 // collides frequently on small palettes (e.g. "image" vs "detection").
-const typeOrder = new Map();
-const colourFor = (type) => {
+// Each view keeps its own order map so the editor preview cannot reshuffle the
+// colours of the explorer graph.
+const makeColourFor = (order) => (type) => {
   const key = String(type || 'node');
-  if (!typeOrder.has(key)) typeOrder.set(key, typeOrder.size);
+  if (!order.has(key)) order.set(key, order.size);
   const palette = palettes[theme];
-  return palette[typeOrder.get(key) % palette.length];
+  return palette[order.get(key) % palette.length];
 };
+const typeOrder = new Map();
+const previewTypeOrder = new Map();
+const colourFor = makeColourFor(typeOrder);
+const previewColourFor = makeColourFor(previewTypeOrder);
 const display = (value) => typeof value === 'object' ? JSON.stringify(value) : String(value);
 
 function normalizeNode(node, index) {
@@ -357,7 +373,7 @@ function renderSchemaMeta() {
 }
 
 function setView(view) {
-  currentView = view === 'schema' ? 'schema' : 'graph';
+  currentView = ['schema', 'editor'].includes(view) ? view : 'graph';
   viewTabs.forEach(tab => {
     const active = tab.dataset.view === currentView;
     tab.classList.toggle('is-active', active);
@@ -365,9 +381,19 @@ function setView(view) {
   });
   graphSlot.classList.toggle('is-hidden', currentView !== 'graph');
   schemaSlot.classList.toggle('is-hidden', currentView !== 'schema');
-  // The welcome overlay is shown until a graph is loaded, in both views.
-  emptyState.hidden = hasGraph;
+  editorSlot.classList.toggle('is-hidden', currentView !== 'editor');
+  canvasStack?.classList.toggle('is-editor', currentView === 'editor');
+  // The welcome overlay is shown until a graph is loaded, and never covers the
+  // editor: an empty source there is a normal starting point, not an empty app.
+  emptyState.hidden = hasGraph || currentView === 'editor';
   if (currentView === 'schema' && schemaDirty) renderSchema(true);
+  if (currentView === 'editor') {
+    ensurePreview();
+    // A hidden slot measures 0×0, and the layout is still collapsed right after
+    // setup — fitting then would frame a cloud of coincident nodes. Fit once the
+    // tab is visible and the force simulation has settled.
+    if (previewNeedsFit && previewModel.nodes.length) requestPreviewFit();
+  }
   renderSchemaMeta();
   // The details panel mirrors the active view's own selection state.
   showDetails();
@@ -485,6 +511,7 @@ function applyTheme(next, { persist = true } = {}) {
   // Orb draws on a canvas, so its colours must be re-applied by hand.
   styleElements();
   styleSchema();
+  stylePreview();
 }
 
 if (themeToggle) {
@@ -503,6 +530,9 @@ if (physicsToggle) {
     if (schemaOrb) {
       schemaOrb.setSettings({ layout: { type: 'force', options: { isPhysicsEnabled: Boolean(physicsEnabled) } } });
     }
+    if (previewOrb) {
+      previewOrb.setSettings({ layout: { type: 'force', options: { isPhysicsEnabled: Boolean(physicsEnabled) } } });
+    }
   });
 }
 
@@ -519,6 +549,7 @@ function clearSelection() {
   let changed = false;
   if (selected) { selected = null; changed = true; }
   if (schemaSelection) { schemaSelection = null; changed = true; styleSchema(); }
+  if (previewSelection) { previewSelection = null; changed = true; stylePreview(); renderPreviewStatus(); }
   if (!changed) return;
   showDetails();
   styleElements();
@@ -527,12 +558,14 @@ function clearSelection() {
 function showDetails() {
   const details = document.querySelector('#selection-details'); const empty = document.querySelector('#selection-empty');
   const eyebrow = document.querySelector('#details-eyebrow');
-  const current = currentView === 'schema' ? schemaSelection : selected;
-  if (eyebrow) eyebrow.textContent = currentView === 'schema' ? 'SCHEMA DETAILS' : 'SELECTION DETAILS';
+  const current = currentView === 'schema' ? schemaSelection : currentView === 'editor' ? previewSelection : selected;
+  if (eyebrow) eyebrow.textContent = currentView === 'schema' ? 'SCHEMA DETAILS' : currentView === 'editor' ? 'PREVIEW DETAILS' : 'SELECTION DETAILS';
   if (empty) {
     empty.querySelector('p').textContent = currentView === 'schema'
       ? 'Click a node type or relationship to see its aggregate details.'
-      : 'Click a node or edge to see its attributes and relationships.';
+      : currentView === 'editor'
+        ? 'Click a node or edge in the preview to see its details.'
+        : 'Click a node or edge to see its attributes and relationships.';
   }
   details.hidden = !current; empty.hidden = Boolean(current);
   if (!current) return;
@@ -567,6 +600,17 @@ function showDetails() {
       rows.edges = current.item.count;
       if (current.item.attributes.size) rows['attribute keys'] = [...current.item.attributes].join(', ');
     }
+  } else if (current === previewSelection) {
+    // The preview has no separate details state — read straight from the model
+    // that the last successful parse produced.
+    const { kind, id } = previewSelection;
+    const item = (kind === 'node' ? previewModel.nodes : previewModel.edges).find(entry => entry.id === id);
+    if (!item) return;
+    related = kind === 'node' ? previewModel.edges.filter(edge => edge.start === id || edge.end === id).length : 2;
+    kindBadge.textContent = kind === 'node' ? 'NODE' : 'EDGE';
+    title.textContent = kind === 'node' ? item.label : `${item.start} → ${item.end}`;
+    relatedLabel = kind === 'node' ? 'connected edges' : 'connected nodes';
+    Object.assign(rows, kind === 'node' ? { id: item.id, type: item.type, ...item.attributes } : { id: item.id, source: item.start, target: item.end, ...item.attributes });
   } else {
     const { kind, item } = selected;
     related = kind === 'node' ? model.edges.filter(e => e.start === item.id || e.end === item.id).length : 2;
@@ -600,6 +644,20 @@ function load(text, name) {
     hasGraph = true;
     if (schemaOrb) { schemaOrb.destroy?.(); schemaElement.replaceChildren(); schemaOrb = undefined; }
     emptyState.hidden = true;
+    // Keep the editor in sync with whatever was just loaded so the source can be
+    // tweaked and previewed immediately.
+    if (sourceEditor) {
+      sourceEditor.value = text;
+      // The editor now holds real content — do not replace it with the starter
+      // example if the user later clears it.
+      hasEditorSeed = true;
+      previewSignature = '';
+      previewPositions.clear();
+      previewModel = { nodes: [], edges: [], directed: true };
+      previewSelection = null;
+      previewNeedsFit = true;
+      if (previewOrb) updatePreview({ force: true });
+    }
     showDetails(); renderGraph(true);
     if (currentView === 'schema') renderSchema(true);
     renderSchemaMeta();
@@ -611,9 +669,289 @@ function load(text, name) {
 function message(text, isError = false) { toast.textContent = text; toast.classList.toggle('error', isError); toast.classList.add('visible'); clearTimeout(message.timer); message.timer = setTimeout(() => toast.classList.remove('visible'), 3400); }
 function handleFile(file) { if (!file) return; file.text().then(text => load(text, file.name)); }
 
+// ---------------------------------------------------------------------------
+// Editor view
+//
+// A source editor on the left and a live Orb preview on the right. The preview
+// keeps its node positions between keystrokes (`getPosition` + a snapshot map)
+// so the layout does not jump around while typing, and a failed parse leaves
+// the last good preview on screen with the error reported in the status bar.
+// ---------------------------------------------------------------------------
+const looksLikeDot = (text) => /^\s*(strict\s+)?(di)?graph\b/i.test(text);
+const parseSource = (text) => (looksLikeDot(text) ? parseDot(text) : parseNodeLink(text));
+
+// Small example that shows both node attributes and labelled edges, so the
+// first thing in the editor is something worth poking at.
+const STARTER_SOURCE = `digraph {
+  client [type="service"]
+  api    [type="service"]
+  db     [type="store"]
+
+  client -> api [label="http", weight="0.9"]
+  api    -> db  [label="query", weight="0.4"]
+  api    -> api [label="retry"]
+}
+`;
+
+const previewPositions = new Map();
+let previewSignature = '';
+let previewTimer;
+let previewNeedsFit = true;
+
+function previewGetPosition(node) {
+  const saved = previewPositions.get(String(node.getData().id));
+  return saved ? { x: saved.x, y: saved.y } : undefined;
+}
+
+function snapshotPreviewPositions() {
+  if (!previewOrb) return;
+  previewOrb.data.getNodePositions().forEach(position => {
+    if (typeof position.x === 'number' && typeof position.y === 'number') {
+      previewPositions.set(String(position.id), { x: position.x, y: position.y });
+    }
+  });
+}
+
+// Fit the preview once, after the layout settles. Both paths are one-shot: a
+// permanent listener would re-fit the view after every node drag.
+function requestPreviewFit() {
+  if (!previewOrb || !previewNeedsFit) return;
+  previewNeedsFit = false;
+  const fit = () => { try { previewOrb?.recenter(); } catch (error) { /* view may be gone */ } };
+  try { previewOrb.events.once(OrbEventType.SIMULATION_END, fit); } catch (error) { /* ignore */ }
+  setTimeout(fit, 700);
+}
+
+function ensurePreview() {
+  if (previewOrb) return;
+  // An empty editor is a dead end — start with a tiny graph to edit.
+  if (!hasEditorSeed && sourceEditor && sourceEditor.value.trim() === '') {
+    sourceEditor.value = STARTER_SOURCE;
+    hasEditorSeed = true;
+    previewNeedsFit = true;
+  }
+  previewOrb = new OrbView(previewElement, {
+    getPosition: previewGetPosition,
+    layout: {
+      type: 'force',
+      options: {
+        isPhysicsEnabled: Boolean(physicsEnabled),
+        useGPU: false,
+        links: { distance: 70, strength: 0.8, iterations: 1 },
+        manyBody: { strength: -120, theta: 0.9, distanceMin: 1, distanceMax: 5000 },
+        collision: { radius: 12, strength: 1, iterations: 1 }
+      }
+    },
+    render: {
+      node: { size: 10 },
+      // A hand-written graph is usually tiny. The fit happens after the layout
+      // settles, so allowing a generous zoom-in is what makes those graphs
+      // readable; the cap only stops a two-node graph from filling the pane.
+      maxZoom: 3.2,
+      fitZoomMargin: 0.35
+    }
+  });
+  previewOrb.events.on(OrbEventType.NODE_CLICK, ({ node }) => selectPreview('node', node.getData().id));
+  previewOrb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => selectPreview('edge', edge.getData().id));
+  previewOrb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) selectPreview(null); });
+  keepPhysicsRunning(previewOrb);
+  updatePreview({ force: true });
+}
+
+function setEditorStatus(text, state = '') {
+  if (!editorStatus) return;
+  editorStatus.textContent = text;
+  editorStatus.classList.toggle('is-error', state === 'error');
+  editorStatus.classList.toggle('is-idle', state === 'idle');
+}
+
+function selectPreview(kind, id) {
+  if (!kind) {
+    if (!previewSelection) return;
+    previewSelection = null;
+    stylePreview();
+    renderPreviewStatus();
+    showDetails();
+    return;
+  }
+  const item = (kind === 'node' ? previewModel.nodes : previewModel.edges).find(entry => entry.id === String(id));
+  if (!item) return;
+  previewSelection = { kind, id: item.id };
+  stylePreview();
+  renderPreviewStatus();
+  showDetails();
+}
+
+function stylePreview() {
+  if (!previewOrb) return;
+  const colors = canvasColors[theme];
+  const activeNodes = new Set();
+  const activeEdges = new Set();
+  if (previewSelection?.kind === 'node') {
+    activeNodes.add(previewSelection.id);
+    previewModel.edges.forEach(edge => {
+      if (edge.start !== previewSelection.id && edge.end !== previewSelection.id) return;
+      activeEdges.add(edge.id); activeNodes.add(edge.start); activeNodes.add(edge.end);
+    });
+  } else if (previewSelection?.kind === 'edge') {
+    const edge = previewModel.edges.find(entry => entry.id === previewSelection.id);
+    if (edge) { activeEdges.add(edge.id); activeNodes.add(edge.start); activeNodes.add(edge.end); }
+  }
+  const hasSelection = Boolean(previewSelection);
+
+  previewOrb.data.getNodes().forEach(node => {
+    const data = node.getData();
+    const id = String(data.id);
+    const isActive = hasSelection && activeNodes.has(id);
+    const dimmed = hasSelection && !isActive;
+    node.setStyle({
+      label: String(data.label ?? id),
+      color: dimmed ? colors.nodeMuted : (isActive ? colors.nodeActive : previewColourFor(data.type)),
+      size: isActive ? 13 : 9,
+      borderColor: isActive ? colors.activeBorder : colors.nodeBorder,
+      borderWidth: isActive ? 3 : 1,
+      fontColor: colors.nodeLabel,
+      fontSize: 11
+    });
+  });
+  previewOrb.data.getEdges().forEach(edge => {
+    const data = edge.getData();
+    const isActive = activeEdges.has(String(data.id));
+    edge.setStyle({
+      label: data.label || undefined,
+      color: hasSelection && !isActive ? colors.edgeMuted : (isActive ? colors.edgeActive : colors.edge),
+      width: 1.2,
+      fontColor: colors.edgeLabel,
+      fontSize: 9,
+      arrowSize: previewModel.directed ? 3 : 0
+    });
+  });
+}
+
+function renderPreviewStatus(error) {
+  if (error) { setEditorStatus(error, 'error'); return; }
+  if (!previewModel.nodes.length && !previewModel.edges.length) {
+    setEditorStatus('Nothing to preview — type a graph definition.', 'idle');
+    return;
+  }
+  const summary = `${previewModel.nodes.length} nodes · ${previewModel.edges.length} edges`;
+  if (!previewSelection) { setEditorStatus(summary); return; }
+  if (previewSelection.kind === 'node') {
+    const node = previewModel.nodes.find(entry => entry.id === previewSelection.id);
+    if (!node) { setEditorStatus(summary); return; }
+    const degree = previewModel.edges.filter(edge => edge.start === node.id || edge.end === node.id).length;
+    const extras = Object.keys(node.attributes ?? {}).filter(key => !['label', 'type', 'group'].includes(key));
+    setEditorStatus(`NODE ${node.id} · ${node.type} · ${degree} edge${degree === 1 ? '' : 's'}${extras.length ? ` · ${extras.join(', ')}` : ''}`);
+    return;
+  }
+  const edge = previewModel.edges.find(entry => entry.id === previewSelection.id);
+  if (!edge) { setEditorStatus(summary); return; }
+  const extras = Object.keys(edge.attributes ?? {}).filter(key => key !== 'label' && key !== 'weight');
+  setEditorStatus(`EDGE ${edge.start} → ${edge.end}${edge.label ? ` · ${edge.label}` : ''}${extras.length ? ` · ${extras.join(', ')}` : ''}`);
+}
+
+function updatePreview({ force = false } = {}) {
+  if (!sourceEditor) return;
+  const text = sourceEditor.value;
+  if (editorFormat) {
+    const format = text.trim() === '' ? '' : (looksLikeDot(text) ? 'DOT' : 'JSON');
+    editorFormat.textContent = format;
+    editorFormat.hidden = format === '';
+  }
+  ensurePreview();
+
+  if (text.trim() === '') {
+    snapshotPreviewPositions();
+    previewPositions.clear();
+    previewModel = { nodes: [], edges: [], directed: true };
+    previewSelection = null;
+    previewSignature = '';
+    // Nothing on screen, so the next real graph should be framed again.
+    previewNeedsFit = true;
+    previewOrb.data.setup({ nodes: [], edges: [] });
+    previewOrb.render();
+    renderPreviewStatus();
+    return;
+  }
+
+  let next;
+  try {
+    next = parseSource(text);
+  } catch (error) {
+    // Keep the previous preview visible; a half-typed line is not a reason to
+    // blank the canvas.
+    renderPreviewStatus(error.message || 'Could not parse the source.');
+    return;
+  }
+
+  // Only re-run the layout when the topology or labels actually changed — plain
+  // whitespace/comment edits should not restart the simulation.
+  const signature = next.nodes.map(node => `${node.id}\u0000${node.label}\u0000${node.type}`).join('\u0001')
+    + '\u0002' + next.edges.map(edge => `${edge.id}\u0000${edge.start}\u0000${edge.end}\u0000${edge.label}`).join('\u0001');
+  const changed = force || signature !== previewSignature;
+  previewSignature = signature;
+  previewModel = next;
+  previewTypeOrder.clear();
+  next.nodes.forEach(node => previewColourFor(node.type));
+  if (previewSelection && !(previewSelection.kind === 'node' ? next.nodes : next.edges).some(entry => entry.id === previewSelection.id)) {
+    previewSelection = null;
+  }
+
+  if (changed) {
+    // Nodes that have no saved position are brand new — the view was framed for
+    // a different graph, so it has to be fitted again. Edits that only relabel
+    // or rewire existing nodes keep the current view.
+    const hasNewNodes = force || next.nodes.some(node => !previewPositions.has(String(node.id)));
+    snapshotPreviewPositions();
+    // Drop positions of nodes that disappeared so a re-added node starts fresh.
+    const liveIds = new Set(next.nodes.map(node => node.id));
+    [...previewPositions.keys()].forEach(id => { if (!liveIds.has(id)) previewPositions.delete(id); });
+    const nodes = next.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
+    const edges = next.edges.map(edge => ({ id: edge.id, start: edge.start, end: edge.end, label: edge.label, ...edge.attributes }));
+    previewOrb.data.setup({ nodes, edges });
+    previewOrb.render();
+    if (hasNewNodes && currentView === 'editor') {
+      previewNeedsFit = true;
+      requestPreviewFit();
+    }
+  }
+  stylePreview();
+  renderPreviewStatus();
+}
+
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(updatePreview, 220);
+}
+
+if (sourceEditor) {
+  sourceEditor.addEventListener('input', schedulePreview);
+  // Tab indents inside the editor instead of moving focus out of it.
+  sourceEditor.addEventListener('keydown', (event) => {
+    if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    sourceEditor.setRangeText('  ', sourceEditor.selectionStart, sourceEditor.selectionEnd, 'end');
+    schedulePreview();
+  });
+}
+
+if (editorOpen) {
+  editorOpen.addEventListener('click', () => {
+    const text = sourceEditor.value;
+    if (text.trim() === '') { message('The editor is empty.', true); return; }
+    try { parseSource(text); } catch (error) { message(error.message || 'Could not parse the source.', true); return; }
+    load(text, 'editor');
+    setView('graph');
+  });
+}
+
 fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
 document.querySelector('#browse-button').addEventListener('click', () => fileInput.click());
-document.querySelector('#fit-button').addEventListener('click', () => currentView === 'schema' ? schemaOrb?.recenter() : orb?.recenter());
+document.querySelector('#fit-button').addEventListener('click', () => {
+  if (currentView === 'schema') schemaOrb?.recenter();
+  else if (currentView === 'editor') previewOrb?.recenter();
+  else orb?.recenter();
+});
 document.querySelector('#clear-selection').addEventListener('click', clearSelection);
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') fileInput.click(); });
@@ -624,3 +962,4 @@ document.querySelectorAll('.sample-button').forEach(button => button.addEventLis
   const isJson = button.dataset.sample === 'json'; const path = isJson ? '/examples/nodelink.json' : '/examples/graphviz.dot';
   const response = await fetch(path); load(await response.text(), isJson ? 'nodelink.json' : 'graphviz.dot');
 }));
+

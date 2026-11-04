@@ -11,6 +11,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 - Load graphs from Node-Link JSON and Graphviz DOT
 - Interactive pan & zoom, node/edge selection, and attribute inspection
 - Schema view (like Memgraph Lab): the graph aggregated into node types and relationship types, rendered with Orb
+- Editor view with live preview: type Graphviz DOT or Node-Link JSON on the left and watch the graph rebuild on the right; a parse error keeps the last good preview and reports the problem in the status bar
 - Force-directed layout (physics)
 - Auto-fit view on load and after simulation ends
 - Dark and light themes, with the choice remembered between visits
@@ -37,8 +38,8 @@ This project started because I needed a lightweight tool to visualize graphs pro
 - Example data is available via sidebar buttons: `examples/nodelink.json` and `examples/graphviz.dot`.
 - Controls in the header: `Fit view` button, `Physics` toggle, and the `Light` theme toggle.
 - Click a node or edge to see attributes in the details panel.
-- Switch between the `Graph` and `Schema` tabs above the canvas. The `Schema` tab collapses the loaded graph into one circle per node type and one edge per relationship type, which keeps large graphs readable.
-- Click a node type or relationship in the schema view to see its aggregate details in the right panel. Self-relationships of one type are drawn as a single loop, labelled with the number of relationship types it stands for.
+- Switch between the `Graph` and `Schema` tabs above the canvas. The `Schema` tab collapses the loaded graph into one circle per node type and one edge per relationship type, which keeps large graphs readable.- Click a node type or relationship in the schema view to see its aggregate details in the right panel. Self-relationships of one type are drawn as a single loop, labelled with the number of relationship types it stands for.
+- Switch to the `Editor` tab to write a graph by hand. The preview updates as you type (topology changes restart the layout; the node positions are kept between edits so the diagram does not jump). `Open in explorer` hands the current source to the Graph view once it parses.
 
 ## File formats
 
