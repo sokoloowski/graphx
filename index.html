@@ -7,11 +7,17 @@
   <meta name="theme-color" content="#101d2e" />
   <title>GraphX · Graph Explorer</title>
   <script>
-    // Apply the saved theme before first paint so the page never flashes the
-    // wrong palette.
-    try {
-      if (localStorage.getItem('graphx-theme') === 'light') document.documentElement.dataset.theme = 'light';
-    } catch (error) { /* storage may be unavailable */ }
+    // Resolve the theme mode before first paint so the page never flashes the
+    // wrong palette: a stored preference wins, otherwise follow the system.
+    (() => {
+      const modes = ['auto', 'light', 'dark'];
+      let mode = 'auto';
+      try { mode = localStorage.getItem('graphx-theme') || 'auto'; } catch (error) { /* storage may be unavailable */ }
+      if (!modes.includes(mode)) mode = 'auto';
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.dataset.theme = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
+    })();
   </script>
 </head>
 
@@ -21,17 +27,17 @@
       <div class="brand"><span class="brand-mark">G</span><span>Graph<b>X</b></span></div>
       <div id="graph-meta" class="graph-meta">No graph loaded</div>
       <div class="topbar-actions">
-        <button id="fit-button" class="icon-button" title="Fit view" aria-label="Fit view">⌗</button>
         <label class="toggle-control" title="Toggle physics">
           <input id="physics-toggle" type="checkbox" checked aria-label="Physics" />
           <span class="toggle-switch" aria-hidden="true"></span>
           <span class="toggle-text">Physics</span>
         </label>
-        <label id="theme-toggle-label" class="toggle-control" title="Switch to light theme">
-          <input id="theme-toggle" type="checkbox" aria-label="Light theme" />
-          <span class="toggle-switch" aria-hidden="true"></span>
-          <span class="toggle-text">Light</span>
-        </label>
+        <button id="theme-toggle" type="button" class="icon-button" title="Theme: auto (follows system)"
+          aria-label="Theme: auto (follows system)">
+          <i class="bi bi-moon-stars-fill theme-icon theme-icon-dark" aria-hidden="true"></i>
+          <i class="bi bi-sun-fill theme-icon theme-icon-light" aria-hidden="true"></i>
+          <i class="bi bi-circle-half theme-icon theme-icon-auto" aria-hidden="true"></i>
+        </button>
         <label class="file-button">Load file<input id="file-input" type="file"
             accept=".json,.node-link,.dot,.gv,text/vnd.graphviz,application/json" /></label>
       </div>
@@ -58,12 +64,19 @@
         </div>
       </aside>
       <section class="graph-area">
-        <div class="view-tabs" role="tablist" aria-label="View">
-          <button class="view-tab is-active" type="button" role="tab" data-view="graph"
-            aria-selected="true">Graph</button>
-          <button class="view-tab" type="button" role="tab" data-view="schema" aria-selected="false">Schema</button>
-          <button class="view-tab" type="button" role="tab" data-view="editor" aria-selected="false">Editor</button>
-          <span id="view-hint" class="view-hint"></span>
+        <div class="view-bar">
+          <div class="view-tabs" role="tablist" aria-label="View">
+            <button class="view-tab is-active" type="button" role="tab" data-view="graph"
+              aria-selected="true">Graph</button>
+            <button class="view-tab" type="button" role="tab" data-view="schema" aria-selected="false">Schema</button>
+            <button class="view-tab" type="button" role="tab" data-view="editor" aria-selected="false">Editor</button>
+          </div>
+          <div class="view-actions">
+            <span id="view-hint" class="view-hint"></span>
+            <button id="fit-button" class="icon-button" title="Fit view" aria-label="Fit view">
+              <i class="bi bi-aspect-ratio" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <div class="canvas-stack">
           <div id="graph-slot" class="canvas-slot">

@@ -36,7 +36,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 
 - Drag-and-drop a graph file into the main area or use the "Load file" button.
 - Example data is available via sidebar buttons: `examples/nodelink.json` and `examples/graphviz.dot`.
-- Controls in the header: `Fit view` button, `Physics` toggle, and the `Light` theme toggle.
+- Controls in the header: `Fit view` button, `Physics` toggle, and a three-state theme button (sun = light, moon = dark, half circle = auto, following the system preference). The choice is remembered in `localStorage`.
 - Click a node or edge to see attributes in the details panel.
 - Switch between the `Graph` and `Schema` tabs above the canvas. The `Schema` tab collapses the loaded graph into one circle per node type and one edge per relationship type, which keeps large graphs readable.- Click a node type or relationship in the schema view to see its aggregate details in the right panel. Self-relationships of one type are drawn as a single loop, labelled with the number of relationship types it stands for.
 - Switch to the `Editor` tab to write a graph by hand. The preview updates as you type (topology changes restart the layout; the node positions are kept between edits so the diagram does not jump). `Open in explorer` hands the current source to the Graph view once it parses.
@@ -48,6 +48,6 @@ This project started because I needed a lightweight tool to visualize graphs pro
 
 ## License & credits
 
-This project uses [`@memgraph/orb`](https://github.com/memgraph/orb) for rendering.
+This project uses [`@memgraph/orb`](https://github.com/memgraph/orb) for rendering and [Bootstrap Icons](https://icons.getbootstrap.com/) for the header icons.
 
 I was able to create this project thanks to AI agents, Codex and Copilot, which did a lot in terms of writing code, where I only had to provide guidance and review the results.

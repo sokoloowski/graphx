@@ -1,4 +1,5 @@
 import { OrbEventType, OrbView } from '@memgraph/orb';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 import parseDotSource from 'dotparser';
 import './style.css';
 
@@ -36,9 +37,10 @@ const physicsToggle = document.querySelector('#physics-toggle');
 let physicsEnabled = physicsToggle ? physicsToggle.checked : true;
 
 const themeToggle = document.querySelector('#theme-toggle');
-const themeToggleLabel = document.querySelector('#theme-toggle-label');
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const THEME_KEY = 'graphx-theme';
+const THEME_MODES = ['auto', 'light', 'dark'];
+const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 // One palette per theme; the light variant is darkened so nodes keep contrast
 // against a light canvas.
@@ -53,6 +55,14 @@ const canvasColors = {
   light: { nodeLabel: '#1d2b3a', nodeBorder: '#2a3a4a', nodeActive: '#e3edfd', nodeMuted: '#c9d6e3', activeBorder: '#2f6fe0', edgeLabel: '#4c5f72', edge: '#7c8e9e', edgeMuted: '#d2dce6', edgeActive: '#0f9e83' }
 };
 
+// Theme mode is what the user picked (auto | light | dark); the resolved theme
+// is what actually gets painted and is what the canvas palettes key on.
+const readThemeMode = () => {
+  const mode = document.documentElement.dataset.themeMode;
+  return THEME_MODES.includes(mode) ? mode : 'auto';
+};
+
+let themeMode = readThemeMode();
 let theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 
 // Assign colours by first-seen order of the type instead of hashing — hashing
@@ -496,17 +506,14 @@ function styleElements() {
   });
 }
 
-function applyTheme(next, { persist = true } = {}) {
-  theme = next === 'light' ? 'light' : 'dark';
+// Paint the effective theme (dark or light). Called on mode changes, on system
+// preference changes while in auto mode, and once at start-up.
+function applyTheme(nextTheme, { persist = true } = {}) {
+  theme = nextTheme === 'light' ? 'light' : 'dark';
   document.documentElement.dataset.theme = theme;
-  if (themeToggle) themeToggle.checked = theme === 'light';
-  if (themeToggleLabel) {
-    const target = theme === 'light' ? 'dark' : 'light';
-    themeToggleLabel.title = `Switch to ${target} theme`;
-  }
   themeColorMeta?.setAttribute('content', theme === 'light' ? '#f4f7fa' : '#101d2e');
   if (persist) {
-    try { localStorage.setItem(THEME_KEY, theme); } catch (error) { /* ignore unavailable storage */ }
+    try { localStorage.setItem(THEME_KEY, themeMode); } catch (error) { /* ignore unavailable storage */ }
   }
   // Orb draws on a canvas, so its colours must be re-applied by hand.
   styleElements();
@@ -514,11 +521,35 @@ function applyTheme(next, { persist = true } = {}) {
   stylePreview();
 }
 
-if (themeToggle) {
-  themeToggle.checked = theme === 'light';
-  themeToggle.addEventListener('change', (event) => applyTheme(event.target.checked ? 'light' : 'dark'));
+const resolveTheme = (mode) => (mode === 'auto' ? (systemDarkQuery.matches ? 'dark' : 'light') : mode);
+
+const updateThemeLabel = () => {
+  if (!themeToggle) return;
+  const next = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+  const describe = { auto: 'auto (follows system)', light: 'light', dark: 'dark' };
+  const label = `Theme: ${describe[themeMode]} — switch to ${describe[next]}`;
+  themeToggle.title = label;
+  themeToggle.setAttribute('aria-label', label);
+};
+
+function applyThemeMode(mode, { persist = true } = {}) {
+  themeMode = THEME_MODES.includes(mode) ? mode : 'auto';
+  document.documentElement.dataset.themeMode = themeMode;
+  updateThemeLabel();
+  applyTheme(resolveTheme(themeMode), { persist });
 }
-applyTheme(theme, { persist: false });
+
+if (themeToggle) {
+  themeToggle.addEventListener('click', () => {
+    const next = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+    applyThemeMode(next);
+  });
+}
+// Keep auto mode live when the OS switches between light and dark.
+systemDarkQuery.addEventListener('change', () => {
+  if (themeMode === 'auto') applyTheme(resolveTheme('auto'), { persist: false });
+});
+applyThemeMode(themeMode, { persist: false });
 
 // Listen to toggle changes and update settings live
 if (physicsToggle) {

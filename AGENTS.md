@@ -12,6 +12,7 @@ GraphX is a small, dependency-light interactive graph explorer for Node-Link JSO
 - Vite (dev server + build)
 - `@memgraph/orb` for graph rendering and physics layout
 - [`dotparser`](https://www.npmjs.com/package/dotparser) for parsing Graphviz DOT files
+- [`bootstrap-icons`](https://icons.getbootstrap.com/) icon font for the header icons
 
 ## Commands
 
@@ -35,6 +36,7 @@ There are no tests or linters configured. Verify changes by running the dev serv
 
 - Keep the app framework-free; do not introduce frameworks, build plugins, or new runtime dependencies without a strong reason.
 - All user-facing text must be in English.
+- Icons come from the `bootstrap-icons` package: use `<i class="bi bi-<name>">` markup and the `.bi-*` classes, not inline SVG or new icon dependencies.
 - DOT parsing is done with the `dotparser` library (AST in, normalized records out) via `parseDot()` in `src/main.js`. Do not hand-roll parsing logic; extend the AST walker instead.
 - Node/edge records are normalized into `{ id, label, type, attributes }` / `{ id, start, end, label, attributes }` before rendering — keep new parsing paths consistent with these shapes.
 - Prefer small, focused commits with imperative-mood messages (e.g. "Add physics toggle feature").
