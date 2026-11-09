@@ -21,6 +21,7 @@ const dropZone = document.querySelector('#drop-zone');
 const fileInput = document.querySelector('#file-input');
 const meta = document.querySelector('#graph-meta');
 const toast = document.querySelector('#toast');
+const focusClear = document.querySelector('#focus-clear');
 let orb;
 let schemaOrb;
 let previewOrb;
@@ -28,6 +29,10 @@ let model = { nodes: [], edges: [], directed: true };
 let selected = null;
 let schemaSelection = null;
 let previewSelection = null;
+let focusNodeId = null;
+let focusNodeIds = null;
+let focusEdgeIds = null;
+let focusCounts = null;
 let previewModel = { nodes: [], edges: [], directed: true };
 let schemaModel = { nodes: [], edges: [], types: new Map(), relationTypes: new Map() };
 let currentView = 'graph';
@@ -206,6 +211,137 @@ function getSelectionContext() {
 }
 
 // ---------------------------------------------------------------------------
+// Focus mode
+//
+// Double-clicking a node narrows the graph down to that node and its direct
+// neighbours: the nodes an edge leads into (parents) and the nodes it leads out
+// to (children). Only one hop is included — nothing above or below that — so a
+// layered graph is explored one level at a time instead of dragging in a whole
+// branch.
+//
+// The edge set is the *induced* subgraph of the visible nodes, not just the
+// edges that touch the clicked node. Neighbours are frequently wired to each
+// other too (in a ZK graph the detections of one image are SIMILAR_TO and
+// LOCATED_RELATIVE_TO each other), and dropping those would leave the slice
+// looking disconnected even though the relationships exist.
+// ---------------------------------------------------------------------------
+function directNeighbours(startId) {
+  const nodes = new Set([startId]);
+  const parents = new Set();
+  const children = new Set();
+  model.edges.forEach(edge => {
+    if (edge.start !== startId && edge.end !== startId) return;
+    nodes.add(edge.start);
+    nodes.add(edge.end);
+    if (edge.start === edge.end) return; // self-loop: no neighbour to count
+    if (!model.directed) {
+      // No direction to read, so both ends are simply neighbours.
+      const other = edge.start === startId ? edge.end : edge.start;
+      parents.add(other);
+      children.add(other);
+      return;
+    }
+    if (edge.start === startId) children.add(edge.end);
+    else parents.add(edge.start);
+  });
+
+  // Every edge whose two endpoints are visible — including the ones between
+  // two neighbours, which never touch `startId`.
+  const edges = new Set();
+  model.edges.forEach(edge => {
+    if (nodes.has(edge.start) && nodes.has(edge.end)) edges.add(edge.id);
+  });
+  return { nodes, edges, parentCount: parents.size, childCount: children.size };
+}
+
+// Node positions are carried across re-renders so focusing does not reshuffle
+// the layout the user is already looking at.
+const graphPositions = new Map();
+
+function graphGetPosition(node) {
+  const saved = graphPositions.get(String(node.getData().id));
+  return saved ? { x: saved.x, y: saved.y } : undefined;
+}
+
+function snapshotGraphPositions() {
+  if (!orb) return;
+  orb.data.getNodePositions().forEach(position => {
+    if (typeof position.x === 'number' && typeof position.y === 'number') {
+      graphPositions.set(String(position.id), { x: position.x, y: position.y });
+    }
+  });
+}
+
+// Everything Orb should draw right now: the whole model, or the focused slice.
+function visibleGraph() {
+  if (!focusNodeIds) return { nodes: model.nodes, edges: model.edges };
+  const nodes = model.nodes.filter(node => focusNodeIds.has(node.id));
+  const edges = model.edges.filter(edge => focusEdgeIds.has(edge.id));
+  return { nodes, edges };
+}
+
+function focusNode(id) {
+  const node = model.nodes.find(entry => entry.id === String(id));
+  if (!node) return;
+  const { nodes, edges, parentCount, childCount } = directNeighbours(node.id);
+  if (nodes.size < 2) {
+    message(`"${node.label}" has no parents or children.`);
+    return;
+  }
+  if (nodes.size >= model.nodes.length) {
+    message(`"${node.label}" is connected to every other node.`);
+    return;
+  }
+  focusNodeId = node.id;
+  focusNodeIds = nodes;
+  focusEdgeIds = edges;
+  focusCounts = { parents: parentCount, children: childCount, directed: model.directed };
+  // Focusing is a view-level operation: a leftover single-node selection would
+  // dim most of the freshly revealed slice, which defeats the purpose.
+  selected = null;
+  applyFocus();
+  message(`Focused on "${node.label}" — ${describeFocus()}`);
+}
+
+// "3 parents, 2 children" for a directed graph, "4 neighbours" otherwise, since
+// an undirected edge does not say which end is the parent.
+function describeFocus() {
+  const { parents, children, directed } = focusCounts ?? { parents: 0, children: 0, directed: true };
+  const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+  // "child" pluralises to "children", not "childs".
+  const children_ = (count) => `${count} ${count === 1 ? 'child' : 'children'}`;
+  if (!directed) return plural(parents, 'neighbour');
+  return `${plural(parents, 'parent')}, ${children_(children)}`;
+}
+
+function clearFocus() {
+  if (!focusNodeIds) return false;
+  focusNodeId = null;
+  focusNodeIds = null;
+  focusEdgeIds = null;
+  focusCounts = null;
+  applyFocus();
+  return true;
+}
+
+// Re-render on the next tick: the double-click handler runs inside Orb's own
+// event dispatch, and tearing the view down mid-dispatch would leave it
+// rendering into a destroyed canvas.
+function applyFocus() {
+  snapshotGraphPositions();
+  setTimeout(() => {
+    renderGraph(true);
+    showDetails();
+  }, 0);
+}
+
+function renderFocusControls() {
+  if (!focusClear) return;
+  const active = Boolean(focusNodeIds) && currentView === 'graph';
+  focusClear.hidden = !active;
+}
+
+// ---------------------------------------------------------------------------
 // Schema view
 //
 // Memgraph Lab style: one node per node type, one edge per relationship type
@@ -269,7 +405,7 @@ let schemaDirty = false;
 
 function renderSchema(recenter = false) {
   if (schemaOrb) { schemaOrb.destroy?.(); schemaElement.replaceChildren(); schemaOrb = undefined; }
-  if (!schemaModel.nodes.length) { renderSchemaMeta(); return; }
+  if (!schemaModel.nodes.length) { renderViewHint(); return; }
   const nodes = schemaModel.nodes.map(entry => ({ id: entry.id, label: entry.id, count: entry.count }));
   const edges = schemaModel.edges.map(entry => ({ id: entry.id, start: entry.start, end: entry.end, label: schemaEdgeLabel(entry), count: entry.count }));
   schemaOrb = new OrbView(schemaElement, {
@@ -299,7 +435,7 @@ function renderSchema(recenter = false) {
   schemaOrb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
   keepPhysicsRunning(schemaOrb);
   schemaOrb.render(() => {
-    renderSchemaMeta();
+    renderViewHint();
     if (recenter) {
       try { schemaOrb.recenter(); } catch (error) { /* view may not be ready yet */ }
       // `once`: a permanent listener would re-fit the view every time the
@@ -371,8 +507,17 @@ function selectSchemaKind(kind, id) {
   showDetails();
 }
 
-function renderSchemaMeta() {
+function renderViewHint() {
   if (!viewHint) return;
+  if (currentView === 'graph') {
+    if (focusNodeIds) {
+      const label = model.nodes.find(node => node.id === focusNodeId)?.label ?? focusNodeId;
+      viewHint.textContent = `Focus: ${label} · ${describeFocus()}`;
+      return;
+    }
+    viewHint.textContent = hasGraph ? 'Double-click a node to show it with its direct parents and children' : '';
+    return;
+  }
   if (currentView !== 'schema') { viewHint.textContent = ''; return; }
   if (!schemaModel.nodes.length) { viewHint.textContent = 'No graph loaded'; return; }
   const types = schemaModel.nodes.length;
@@ -397,6 +542,7 @@ function setView(view) {
   // editor: an empty source there is a normal starting point, not an empty app.
   emptyState.hidden = hasGraph || currentView === 'editor';
   if (currentView === 'schema' && schemaDirty) renderSchema(true);
+  if (currentView === 'graph' && !orb && hasGraph) renderGraph(true);
   if (currentView === 'editor') {
     ensurePreview();
     // A hidden slot measures 0×0, and the layout is still collapsed right after
@@ -404,7 +550,8 @@ function setView(view) {
     // tab is visible and the force simulation has settled.
     if (previewNeedsFit && previewModel.nodes.length) requestPreviewFit();
   }
-  renderSchemaMeta();
+  renderViewHint();
+  renderFocusControls();
   // The details panel mirrors the active view's own selection state.
   showDetails();
 }
@@ -412,10 +559,14 @@ function setView(view) {
 viewTabs.forEach(tab => tab.addEventListener('click', () => setView(tab.dataset.view)));
 
 function renderGraph(recenter = false) {
-  if (orb) { orb.destroy?.(); graphElement.replaceChildren(); }
-  const nodes = model.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
-  const edges = model.edges.map(edge => ({ id: edge.id, start: edge.start, end: edge.end, label: edge.label, ...edge.attributes }));
+  if (orb) { orb.destroy?.(); graphElement.replaceChildren(); orb = undefined; }
+  const visible = visibleGraph();
+  const nodes = visible.nodes.map(node => ({ id: node.id, label: node.label, type: node.type, ...node.attributes }));
+  const edges = visible.edges.map(edge => ({ id: edge.id, start: edge.start, end: edge.end, label: edge.label, ...edge.attributes }));
   const orbOptions = {
+    // Reuse the positions the previous render knew about, so switching focus on
+    // and off does not re-run the layout from a random cloud.
+    getPosition: graphGetPosition,
     layout: {
       type: 'force',
       // Use API-correct force layout options
@@ -438,8 +589,11 @@ function renderGraph(recenter = false) {
   styleElements();
   orb.events.on(OrbEventType.NODE_CLICK, ({ node }) => select('node', node.getData().id));
   orb.events.on(OrbEventType.EDGE_CLICK, ({ edge }) => select('edge', edge.getData().id));
+  orb.events.on(OrbEventType.NODE_DOUBLE_CLICK, ({ node }) => focusNode(node.getData().id));
   orb.events.on(OrbEventType.MOUSE_CLICK, ({ subject }) => { if (!subject) clearSelection(); });
   keepPhysicsRunning(orb);
+  renderViewHint();
+  renderFocusControls();
   orb.render(() => {
     if (recenter) {
       // try immediate recenter
@@ -665,6 +819,9 @@ function load(text, name) {
   try {
     model = /^\s*(strict\s+)?(di)?graph\b/i.test(text) ? parseDot(text) : parseNodeLink(text);
     selected = null; schemaSelection = null;
+    // A new graph invalidates both the focus slice and the cached layout.
+    focusNodeId = null; focusNodeIds = null; focusEdgeIds = null; focusCounts = null;
+    graphPositions.clear();
     const previousTypes = [...typeOrder.keys()].sort().join('|');
     typeOrder.clear();
     // Keep type colours stable across reloads when the same types are present.
@@ -691,7 +848,7 @@ function load(text, name) {
     }
     showDetails(); renderGraph(true);
     if (currentView === 'schema') renderSchema(true);
-    renderSchemaMeta();
+    renderViewHint();
     meta.textContent = `${name} · ${model.nodes.length} nodes · ${model.edges.length} edges`;
     message(`Loaded "${name}"`);
   } catch (error) { message(error.message || 'Failed to read the file.', true); }
@@ -984,6 +1141,9 @@ document.querySelector('#fit-button').addEventListener('click', () => {
   else orb?.recenter();
 });
 document.querySelector('#clear-selection').addEventListener('click', clearSelection);
+document.querySelector('#focus-clear')?.addEventListener('click', () => {
+  if (currentView === 'graph' && clearFocus()) message('Showing the whole graph');
+});
 dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') fileInput.click(); });
 ['dragenter', 'dragover'].forEach(event => document.addEventListener(event, e => { e.preventDefault(); dropZone.classList.add('dragging'); }));

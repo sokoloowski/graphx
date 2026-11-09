@@ -699,6 +699,41 @@ input {
     display: none;
 }
 
+.text-button {
+    padding: 7px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* Focus mode: the graph is filtered down to a double-clicked node's ancestors
+   and descendants. The state lives in the view bar (hint + this button), so no
+   overlay ever covers the canvas. */
+.focus-clear {
+    flex: none;
+    padding: 5px 11px;
+    border: 1px solid var(--control-border);
+    border-radius: 6px;
+    background: var(--control-bg);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.focus-clear:hover {
+    border-color: var(--control-hover-border);
+    background: var(--control-hover-bg);
+}
+
+.focus-clear[hidden] {
+    display: none;
+}
+
 .toast {
     position: absolute;
     left: 50%;

@@ -10,6 +10,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 
 - Load graphs from Node-Link JSON and Graphviz DOT
 - Interactive pan & zoom, node/edge selection, and attribute inspection
+- Focus mode: double-click a node to show only that node and its direct parents and children
 - Schema view (like Memgraph Lab): the graph aggregated into node types and relationship types, rendered with Orb
 - Editor view with live preview: type Graphviz DOT or Node-Link JSON on the left and watch the graph rebuild on the right; a parse error keeps the last good preview and reports the problem in the status bar
 - Force-directed layout (physics)
@@ -38,6 +39,7 @@ This project started because I needed a lightweight tool to visualize graphs pro
 - Example data is available via sidebar buttons: `examples/nodelink.json` and `examples/graphviz.dot`.
 - Controls in the header: `Fit view` button, `Physics` toggle, and a three-state theme button (sun = light, moon = dark, half circle = auto, following the system preference). The choice is remembered in `localStorage`.
 - Click a node or edge to see attributes in the details panel.
+- Double-click a node to focus on it: the graph shrinks to that node and its direct neighbours — nodes with an edge pointing into it (parents) and nodes it points at (children). Nothing beyond that one hop is included, so a layered graph is explored level by level. Every relationship between the remaining nodes is kept, not just the ones touching the clicked node, so neighbouring detections still show their `SIMILAR_TO` links. In an undirected graph there is no direction to read, so the same slice is reported as plain neighbours. The view bar shows the counts and a `Show all nodes` button to get the whole graph back.
 - Switch between the `Graph` and `Schema` tabs above the canvas. The `Schema` tab collapses the loaded graph into one circle per node type and one edge per relationship type, which keeps large graphs readable.- Click a node type or relationship in the schema view to see its aggregate details in the right panel. Self-relationships of one type are drawn as a single loop, labelled with the number of relationship types it stands for.
 - Switch to the `Editor` tab to write a graph by hand. The preview updates as you type (topology changes restart the layout; the node positions are kept between edits so the diagram does not jump). `Open in explorer` hands the current source to the Graph view once it parses.
 
